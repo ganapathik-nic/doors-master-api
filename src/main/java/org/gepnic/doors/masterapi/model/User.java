@@ -1,0 +1,77 @@
+ package org.gepnic.doors.masterapi.model;
+
+import jakarta.persistence.*;
+import lombok.Data;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Entity representing a Portal User.
+ * Updated to support Matrix-based Agent Authorization.
+ */
+@Entity
+@Table(name = "users")
+@Data 
+public class User {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "user_id") 
+    private Integer userId;
+
+    @Column(nullable = false, unique = true)
+    private String username;
+
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Column(nullable = false)
+    private String role; // ADMIN, EXTERNAL
+
+    @Column(name = "is_active")
+    private Boolean isActive = false;
+
+    @Column(name = "status", length = 20)
+    private String status = "PENDING"; // PENDING, APPROVED, REJECTED
+
+    @Column(name = "rejection_reason")
+    private String rejectionReason;
+
+    @Column(name = "password_reset_required")
+    private Boolean passwordResetRequired = true;
+
+    // Governance & Profile Fields
+    private String name;
+    private String org;
+    private String description;
+
+    @Column(name = "created_at", insertable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    /**
+     * MATRIX AUTHORIZATION: Agent Mapping
+     * Stores the RHEL Agents this specific user is allowed to access.
+     * Intersection logic: (User Agents) ∩ (Query Agents) = Target Execution Nodes.
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    
+    @CollectionTable(
+        name = "user_authorized_agents", 
+        //joinColumns = @JoinColumn(name = "user_id", referencedColumnName = "username")
+        joinColumns = @JoinColumn(name = "user_name", referencedColumnName = "username")
+    )
+    @Column(name = "agent_id")
+    private List<String> assignedAgents = new ArrayList<>();
+
+    // Helper method to ensure list is never null
+    public List<String> getAssignedAgents() {
+        if (this.assignedAgents == null) {
+            this.assignedAgents = new ArrayList<>();
+        }
+        return this.assignedAgents;
+    }
+}

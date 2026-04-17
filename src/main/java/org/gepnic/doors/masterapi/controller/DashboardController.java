@@ -26,7 +26,49 @@ public class DashboardController {
 
     private final JdbcTemplate jdbcTemplate;
     private final SqlTemplateRepository sqlTemplateRepository;
+/**
+     * USER-SPECIFIC: Dashboard Stats
+     * Used by External Users / DataViewers to see their own access footprint.
+     */
+  @GetMapping("/user/stats")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getUserStats(java.security.Principal principal) {
+        // principal.getName() usually returns the email/sub from your JWT
+        String loginUser = principal.getName(); 
+        log.info("DOORS-MASTER: Fetching personalized metrics for user: {}", loginUser);
+        Map<String, Object> stats = new HashMap<>();
 
+        try {
+            String agentSql = "SELECT agent_id FROM user_authorized_agents WHERE user_name ILIKE ?";
+        List<Map<String, Object>> mappedAgentsList = jdbcTemplate.queryForList(agentSql, loginUser);
+        
+        stats.put("mappedAgents", mappedAgentsList); // Send the whole list
+        stats.put("mappedAgentsCount", mappedAgentsList.size());
+            // 🚀 FIX 1: Use 'user_name' as per your \d output
+            // 🚀 FIX 2: Added a check for 'user_id' just in case your system stores the ID there
+            Integer mappedAgents = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name ILIKE ? OR user_id = ?", 
+                Integer.class, loginUser, loginUser);
+            
+            stats.put("mappedAgentsCount", mappedAgents != null ? mappedAgents : 0);
+
+            // 🚀 FIX 3: Robust Recent Reports query
+            // If 'category' column fails, check if you named it 'category_name' in sql_templates
+            String reportsSql = """
+                SELECT unique_name, category, created_at 
+                FROM sql_templates 
+                WHERE status = 'APPROVED' 
+                ORDER BY created_at DESC LIMIT 5
+                """;
+            stats.put("recentReports", jdbcTemplate.queryForList(reportsSql));
+
+            return ResponseEntity.ok(ApiResponse.success(stats, "User stats loaded"));
+
+        } catch (Exception e) {
+            log.error("DOORS-MASTER: User stats database error: {}", e.getMessage());
+            // Return the specific error message to help debugging during testing
+            return ResponseEntity.status(500).body(ApiResponse.error("DB Error: " + e.getMessage(), 500));
+        }
+    }
     @GetMapping("/stats")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getDashboardStats() {
         log.info("DOORS-MASTER: Generating unified operational metrics for Admin");
@@ -63,16 +105,19 @@ public class DashboardController {
                 "SELECT COUNT(*) FROM external_api_clients", Integer.class);
             stats.put("apiClients", apiClients != null ? apiClients : 0);
 
-            // Count Total Users
-            Integer totalUsers = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM users", Integer.class);
-            stats.put("totalUsers", totalUsers != null ? totalUsers : 0);
+            // Count Active Users
+            Integer activeUsers = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM users where status = 'ACTIVE'", Integer.class);
+            stats.put("activeUsers", activeUsers != null ? activeUsers : 0);
 
             // Count Users Pending Approval (where is_approved is false)
             Integer pendingUsers = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM users WHERE status ='APPROVED' ", Integer.class);
+                "SELECT COUNT(*) FROM users WHERE status ='PENDING' ", Integer.class);
             stats.put("pendingUsers", pendingUsers != null ? pendingUsers : 0);
-
+// Count Pending Data Requests (status != 'APPROVED')
+Integer pendingDataRequests = jdbcTemplate.queryForObject(
+    "SELECT COUNT(*) FROM data_pull_requests WHERE status <> 'APPROVED'", Integer.class);
+stats.put("pendingDataRequests", pendingDataRequests != null ? pendingDataRequests : 0);
             // 4. Recent Governance Activity (Last 5 actions)
             String recentSql = """
                 SELECT a.action_type, a.performed_by, t.unique_name as query_name, a.performed_at 

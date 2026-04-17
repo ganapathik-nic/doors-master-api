@@ -109,18 +109,29 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listClientsWithDet
         apiClientRepository.save(client);
         return ResponseEntity.ok(ApiResponse.success(null, "Status updated"));
     }
+ @PostMapping("/register")
+public ResponseEntity<ApiResponse<ApiClient>> register(@RequestBody Map<String, String> payload) {
+    ApiClient client = new ApiClient();
+    
+    // Log the payload to your console to see exactly what is arriving from Vue
+    System.out.println("DEBUG: Register Payload: " + payload);
 
-    @PostMapping("/register")
-    public ResponseEntity<ApiResponse<ApiClient>> register(@RequestBody Map<String, String> payload) {
-        ApiClient client = new ApiClient();
-        client.setClientName(payload.get("clientName"));
-        client.setDescription(payload.get("description"));
-        client.setCreatedBy(payload.get("createdBy"));
-        client.setIsActive(true);
-        String rawKey = UUID.randomUUID().toString().replace("-", "");
-        client.setApiKey(Base64.getEncoder().encodeToString(rawKey.getBytes()));
-        return ResponseEntity.ok(ApiResponse.success(apiClientRepository.save(client), "Registration Successful"));
-    }
+    client.setClientName(payload.get("clientName"));
+    client.setDescription(payload.get("description"));
+    client.setCreatedBy(payload.get("createdBy"));
+    
+    // 🚀 USE THE SAME KEY NAME AS YOUR SECURITY MODULE
+    // If your Vue code sends { ipWhitelist: "..." }, use "ipWhitelist" here.
+    String ips = payload.get("ipWhitelist"); 
+    client.setAllowedIps(ips); 
+
+    client.setIsActive(true);
+    String rawKey = UUID.randomUUID().toString().replace("-", "");
+    client.setApiKey(Base64.getEncoder().encodeToString(rawKey.getBytes()));
+    
+    return ResponseEntity.ok(ApiResponse.success(apiClientRepository.save(client), "Registration Successful"));
+}
+     
 
     @Transactional
     @PostMapping("/{clientId}/update-mappings")

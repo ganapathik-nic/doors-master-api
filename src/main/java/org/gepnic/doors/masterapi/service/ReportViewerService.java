@@ -19,6 +19,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.sql.Array;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -33,6 +34,13 @@ public class ReportViewerService {
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
 
+    // 🛡️ SQL Injection Pattern for Text-based Scanning
+ 
+// 🛡️ This version catches OR'1'='1' (no spaces)
+private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
+    "(?i)(--|;|\\bUNION\\b|\\bSELECT\\b|\\bDROP\\b|\\bUPDATE\\b|\\bDELETE\\b|\\bOR\\b[\\s'\"\\d]*=[\\s'\"\\d]*)", 
+    Pattern.CASE_INSENSITIVE
+);
     @Transactional(readOnly = true)
     public List<SelectionOption> getQueriesForUser(String username) {
         List<Object[]> results = mappingRepository.findTemplatesByAgentIntersection(username);
@@ -63,18 +71,24 @@ public class ReportViewerService {
                         String.valueOf(result[1]) + " (" + String.valueOf(result[0]) + ")"
                 )).collect(Collectors.toList());
     }
-public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
+
+    public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
         List<Map<String, Object>> aggregatedResults = new ArrayList<>();
-        int actualAuditCount = 0; 
+        int actualAuditCount = 0;
 
         try {
-            String sql = resolveSql(request);
+            // 🛡️ 1. Security Scan: Input Parameters
+            validateParameters(request.getParams());
+
+            // 🛡️ 2. Security Scan: Unauthorized Agents
             List<String> targetAgentIds = resolveAgents(request);
+
+            String sql = resolveSql(request);
             Map<String, Object> sanitizedParams = sanitizeParams(request.getParams());
 
             for (String agentId : targetAgentIds) {
                 try {
-                    String agentUrl = fetchAgentUrl(agentId.trim()); 
+                    String agentUrl = fetchAgentUrl(agentId.trim());
                     String endpoint = buildEndpoint(agentUrl);
 
                     Map<String, Object> payload = new HashMap<>();
@@ -92,23 +106,15 @@ public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
                             Map<String, Object> flatRow = new HashMap<>();
                             flatRow.put("NODE_ID", agentId.trim());
 
-                            // 🚀 1. DYNAMIC FLATTENING & SUB-ROW DETECTION
                             complexRow.forEach((key, value) -> {
                                 if (value instanceof Map) {
-                                    // If it's an Object (like TenderDetails), flatten its fields to the root
                                     ((Map<String, Object>) value).forEach(flatRow::putIfAbsent);
-                                } 
-                                else if (value instanceof Collection || isJsonArrayString(value)) {
-                                    // 🚀 If it's a List (like BoQ or Bidders), keep it as a sub-row key
-                                    // This is now dynamic - no hardcoded names!
+                                } else if (value instanceof Collection || isJsonArrayString(value)) {
                                     flatRow.put(key, convertToStandardList(value));
-                                } 
-                                else {
-                                    // Standard data field
+                                } else {
                                     flatRow.putIfAbsent(key, value);
                                 }
                             });
-
                             aggregatedResults.add(flatRow);
                         }
                         actualAuditCount += rows.size();
@@ -121,6 +127,9 @@ public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
             setRecordCountForAudit(actualAuditCount);
             return aggregatedResults;
 
+        } catch (SecurityException se) {
+            // Re-throw security violations to be caught by the Controller (403)
+            throw se;
         } catch (Exception e) {
             log.error("DOORS-MASTER: Critical failure", e);
             throw e;
@@ -128,8 +137,77 @@ public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
     }
 
     /**
-     * Helper to check if a String value is actually a stringified JSON Array
+     * 🛡️ Scans text parameters for malicious SQL patterns to trigger 403 Forbidden.
      */
+    private void validateParameters(Map<String, Object> params) {
+        if (params == null) return;
+        for (Object value : params.values()) {
+            if (value instanceof String strValue) {
+                if (SQL_INJECTION_PATTERN.matcher(strValue).find()) {
+                    log.error("🚨 SECURITY ALERT: SQL Injection pattern detected in input: [{}]", strValue);
+                    throw new SecurityException("Security Violation: Malicious patterns detected in input.");
+                }
+            }
+        }
+    }
+
+    /**
+     * 🛡️ STRICT VALIDATION: Ensures every requested agent is actually mapped to the user.
+     */
+    private List<String> resolveAgents(ReportExecutionRequest request) {
+        String identity = request.getPerformedBy();
+        Long queryId = request.getQueryId();
+
+        if (queryId == null && request.getQueryUniqueName() != null) {
+            queryId = jdbcTemplate.queryForObject(
+                "SELECT query_id FROM sql_templates WHERE unique_name = ?", 
+                Long.class, request.getQueryUniqueName());
+        }
+
+        List<String> authorized = mappingRepository.findIntersectionAgents(identity, queryId).stream()
+                .map(result -> String.valueOf(result[0])).collect(Collectors.toList());
+
+        if (authorized.isEmpty()) {
+            throw new SecurityException("No authorized agents found for this user and query.");
+        }
+
+        String requested = request.getAgentId();
+        if (requested == null || requested.isBlank() || "ALL".equalsIgnoreCase(requested)) {
+            return authorized;
+        }
+
+        List<String> requestedList = Arrays.stream(requested.split(","))
+                .map(String::trim)
+                .collect(Collectors.toList());
+
+        for (String agent : requestedList) {
+            if (!authorized.contains(agent)) {
+                log.error("🚨 SECURITY VIOLATION: User {} attempted to access unauthorized agent: {}", identity, agent);
+                throw new SecurityException("Access Denied: You are not authorized to access agent " + agent);
+            }
+        }
+        return requestedList;
+    }
+
+    private String fetchAgentUrl(String agentId) {
+        return jdbcTemplate.queryForObject("SELECT base_url FROM agents WHERE agent_id = ?", String.class, agentId);
+    }
+
+    private String resolveSql(ReportExecutionRequest request) {
+        String sql = (request.getQueryId() != null)
+                ? mappingRepository.findSqlByQueryId(request.getQueryId())
+                : mappingRepository.findSqlByUniqueName(request.getQueryUniqueName());
+        if (sql == null || sql.trim().isEmpty()) throw new IllegalStateException("SQL Template not found");
+        return sql;
+    }
+
+    private String buildEndpoint(String agentUrl) {
+        String normalized = (agentUrl != null && agentUrl.endsWith("/")) ? agentUrl.substring(0, agentUrl.length() - 1) : agentUrl;
+        return normalized + "/doorsagent/v1/agent/query/execute";
+    }
+
+    // --- Helper Methods (JSON Parsing & Audit) ---
+
     private boolean isJsonArrayString(Object value) {
         if (value instanceof String) {
             String str = ((String) value).trim();
@@ -141,16 +219,13 @@ public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
     private List<Map<String, Object>> convertToStandardList(Object obj) {
         if (obj == null) return new ArrayList<>();
         try {
-            // If it's a stringified JSON array, parse it first
-            if (obj instanceof String) {
-                obj = objectMapper.readTree((String) obj);
-            }
+            if (obj instanceof String) obj = objectMapper.readTree((String) obj);
             return objectMapper.convertValue(obj, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
             return new ArrayList<>();
         }
     }
-    
+
     private void setRecordCountForAudit(int finalCount) {
         ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         if (attrs != null) {
@@ -233,36 +308,5 @@ public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
             } else { sanitized.put(key, value); }
         });
         return sanitized;
-    }
-
-    private List<String> resolveAgents(ReportExecutionRequest request) {
-        String identity = request.getPerformedBy();
-        Long queryId = request.getQueryId();
-        if (queryId == null && request.getQueryUniqueName() != null) {
-            queryId = jdbcTemplate.queryForObject("SELECT query_id FROM sql_templates WHERE unique_name = ?", Long.class, request.getQueryUniqueName());
-        }
-        List<String> authorized = mappingRepository.findIntersectionAgents(identity, queryId).stream()
-                .map(result -> String.valueOf(result[0])).collect(Collectors.toList());
-        if (authorized.isEmpty()) throw new IllegalStateException("Unauthorized");
-        String requested = request.getAgentId();
-        if (requested == null || requested.isBlank() || "ALL".equalsIgnoreCase(requested)) return authorized;
-        return Arrays.stream(requested.split(",")).map(String::trim).filter(authorized::contains).collect(Collectors.toList());
-    }
-
-    private String fetchAgentUrl(String agentId) {
-        return jdbcTemplate.queryForObject("SELECT base_url FROM agents WHERE agent_id = ?", String.class, agentId);
-    }
-
-    private String resolveSql(ReportExecutionRequest request) {
-        String sql = (request.getQueryId() != null)
-                ? mappingRepository.findSqlByQueryId(request.getQueryId())
-                : mappingRepository.findSqlByUniqueName(request.getQueryUniqueName());
-        if (sql == null || sql.trim().isEmpty()) throw new IllegalStateException("SQL Template not found");
-        return sql;
-    }
-
-    private String buildEndpoint(String agentUrl) {
-        String normalized = (agentUrl != null && agentUrl.endsWith("/")) ? agentUrl.substring(0, agentUrl.length() - 1) : agentUrl;
-        return normalized + "/doorsagent/v1/agent/query/execute";
     }
 }

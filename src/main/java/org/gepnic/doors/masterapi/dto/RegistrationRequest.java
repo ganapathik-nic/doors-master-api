@@ -9,5 +9,7 @@ public record RegistrationRequest(
     String email,
     String org,
     String role,
-    String description
+    String description,
+    String captchaId,    // 🛡️ Added
+    String captchaValue  // 🛡️ Added
 ) {}

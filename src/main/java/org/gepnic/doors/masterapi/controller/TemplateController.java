@@ -10,6 +10,7 @@ import org.gepnic.doors.masterapi.repository.SqlTemplateRepository;
 import org.gepnic.doors.masterapi.service.AgentExecutionService;
 import org.gepnic.doors.masterapi.service.MappingService;
 import org.gepnic.doors.masterapi.service.TemplateService;
+import org.gepnic.doors.masterapi.util.EncryptionUtils;
 import org.gepnic.doors.masterapi.util.SqlSecurityValidator;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -40,33 +41,78 @@ public class TemplateController {
      * Force sync via JDBC to ensure request linkage.
      */
     @Transactional
-    @PostMapping("/submit")
-    public ResponseEntity<ApiResponse<Object>> submitTemplate(@RequestBody SqlTemplate template) {
-        if (!SqlSecurityValidator.isSafeSelectOnly(template.getSqlText())) {
-            return ResponseEntity.status(400).body(ApiResponse.error("Security Violation", 400));
+  @PostMapping("/submit")
+public ResponseEntity<ApiResponse<Object>> submitTemplate(@RequestBody SqlTemplate template) {
+    try {
+        // 🛡️ 1. DECRYPT: Turn the incoming AES gibberish back into a SQL string
+        String encryptedSql = template.getSqlText();
+        String decryptedSql = EncryptionUtils.decrypt(encryptedSql);
+        
+        // 🛡️ 2. VALIDATE: Check the decrypted plain text for security patterns
+        if (!SqlSecurityValidator.isSafeSelectOnly(decryptedSql)) {
+            log.warn("DOORS-SECURITY-ALERT: Unauthorized SQL pattern in submission!");
+            return ResponseEntity.status(400).body(ApiResponse.error("Security Violation: Only SELECT queries allowed", 400));
         }
 
-        template.setStatus("PENDING");
-        template.setIsActive(true);
-        template.setVersion(1);
-        template.setCreatedAt(LocalDateTime.now());
-        
-        SqlTemplate saved = sqlTemplateRepository.save(template);
-        
-        if (saved.getRequestId() != null && "REQUEST".equalsIgnoreCase(saved.getSubmissionSource())) {
-            try {
-                jdbcTemplate.update(
-                    "UPDATE data_pull_requests SET status = ?, query_id = ? WHERE request_id = ?",
-                    "SQL-Submitted", saved.getQueryId(), saved.getRequestId()
-                );
-                log.info("DOORS-SYNC: Linked Q-{} to REQ-{}", saved.getQueryId(), saved.getRequestId());
-            } catch (Exception e) {
-                log.error("DOORS-SYNC-ERROR: {}", e.getMessage());
-            }
-        }
-        return ResponseEntity.ok(ApiResponse.success((Object)saved, "Submitted successfully"));
+        // 🛡️ 3. UPDATE OBJECT: Set the decrypted SQL back into the template for storage
+        template.setSqlText(decryptedSql);
+
+    } catch (Exception e) {
+        log.error("DOORS-AUTH-CRITICAL: SQL Decryption failed during submission: {}", e.getMessage());
+        return ResponseEntity.status(400).body(ApiResponse.error("Invalid Request Payload: Decryption failed", 400));
     }
 
+    // --- Standard logic continues with decrypted text ---
+    template.setStatus("PENDING");
+    template.setIsActive(true);
+    template.setVersion(1);
+    template.setCreatedAt(LocalDateTime.now());
+    
+    SqlTemplate saved = sqlTemplateRepository.save(template);
+    
+    if (saved.getRequestId() != null && "REQUEST".equalsIgnoreCase(saved.getSubmissionSource())) {
+        try {
+            jdbcTemplate.update(
+                "UPDATE data_pull_requests SET status = ?, query_id = ? WHERE request_id = ?",
+                "SQL-Submitted", saved.getQueryId(), saved.getRequestId()
+            );
+            log.info("DOORS-SYNC: Linked Q-{} to REQ-{}", saved.getQueryId(), saved.getRequestId());
+        } catch (Exception e) {
+            log.error("DOORS-SYNC-ERROR: {}", e.getMessage());
+        }
+    }
+    return ResponseEntity.ok(ApiResponse.success((Object)saved, "Submitted successfully"));
+}
+
+    @GetMapping("/list/my-submissions")
+public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(
+        @RequestParam String userId,
+        @RequestParam(required = false) String role) {
+    
+    log.info("DOORS-MASTER: Fetching SQL submissions for: {} (Role: {})", userId, role);
+    try {
+        String sql;
+        // 🛡️ FIXED SQL: Removed 'title' (missing in DB) and used 'unique_name' as the title alias
+        if ("DataManager".equalsIgnoreCase(role)) {
+            sql = "SELECT query_id as \"id\", unique_name as \"uniqueName\", " +
+                  "unique_name as \"title\", " + // 👈 Alias unique_name to title
+                  "description, status, sql_text as \"sqlQuery\", created_at as \"createdAt\", " +
+                  "proposer_id as \"proposerId\" " + 
+                  "FROM sql_templates ORDER BY created_at DESC";
+            return ResponseEntity.ok(ApiResponse.success(jdbcTemplate.queryForList(sql), "Global history retrieved"));
+        } else {
+            sql = "SELECT query_id as \"id\", unique_name as \"uniqueName\", " +
+                  "unique_name as \"title\", " + // 👈 Alias unique_name to title
+                  "description, status, sql_text as \"sqlQuery\", created_at as \"createdAt\" " +
+                  "FROM sql_templates WHERE proposer_id = ? ORDER BY created_at DESC";
+            return ResponseEntity.ok(ApiResponse.success(jdbcTemplate.queryForList(sql, userId), "Personal history retrieved"));
+        }
+    } catch (Exception e) {
+        log.error("DOORS-DATABASE-ERROR: {}", e.getMessage());
+        return ResponseEntity.status(500).body(ApiResponse.error("Database mismatch detected", 500));
+    }
+}
+/* 
  @GetMapping("/list/my-submissions")
 public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@RequestParam String userId) {
     log.info("DOORS-MASTER: Fetching SQL submissions for proposer: {}", userId);
@@ -84,6 +130,8 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
         return ResponseEntity.status(500).body(ApiResponse.error("Fetch failed: " + e.getMessage(), 500));
     }
 }
+    */
+
     /**
      * 2. UPDATE AUTHORIZED NODE MAPPING
      * Fixes the 404 "No static resource" error in Query Library.
@@ -213,18 +261,34 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getActiveAgents() 
         return ResponseEntity.status(500).body(ApiResponse.error("Registry lookup failed", 500));
     }
 }
-    @PostMapping("/test-dry-run")
-    public ResponseEntity<ApiResponse<Object>> testQuery(@RequestBody Map<String, Object> payload) {
-        String agentId = (String) payload.get("agentId");
-        String sql = (String) payload.get("sqlText");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> params = (Map<String, Object>) payload.get("params");
+@PostMapping("/test-dry-run")
+public ResponseEntity<ApiResponse<Object>> testQuery(@RequestBody Map<String, Object> payload) {
+    String agentId = (String) payload.get("agentId");
+    String encryptedSql = (String) payload.get("sqlText"); // This is the AES string
+    
+    @SuppressWarnings("unchecked")
+    Map<String, Object> params = (Map<String, Object>) payload.get("params");
 
+    try {
+        // 🛡️ 1. DECRYPT: Turn the gibberish back into a SQL string
+        String sql = EncryptionUtils.decrypt(encryptedSql);
+        log.info("DOORS-SECURITY: Decrypted SQL for dry-run on agent {}", agentId);
+
+        // 🛡️ 2. VALIDATE: Check the actual SQL after decryption
         if (!SqlSecurityValidator.isSafeSelectOnly(sql)) {
-            return ResponseEntity.status(403).body(ApiResponse.error("Security Violation", 403));
+            log.warn("DOORS-SECURITY-ALERT: Unauthorized SQL pattern detected after decryption!");
+            return ResponseEntity.status(403).body(ApiResponse.error("Security Violation: Only SELECT queries allowed", 403));
         }
 
+        // 🛡️ 3. EXECUTE: Proceed with the safe, decrypted SQL
         Map<String, Object> result = agentExecutionService.executeDryRun(agentId, sql, params);
-        return ResponseEntity.ok(ApiResponse.success((Object)result, "Dry-run result"));
+        return ResponseEntity.ok(ApiResponse.success((Object)result, "Dry-run result retrieved successfully"));
+
+    } catch (Exception e) {
+        log.error("DOORS-AUTH-CRITICAL: Decryption or Execution failed: {}", e.getMessage());
+        return ResponseEntity.status(400).body(ApiResponse.error("Request Processing Error: Invalid payload encryption", 400));
     }
+}    
+
+
 }

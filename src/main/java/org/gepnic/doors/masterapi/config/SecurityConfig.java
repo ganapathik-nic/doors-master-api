@@ -69,8 +69,9 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 // 2. PUBLIC & OPTIONS
+                .requestMatchers("/auth/bootstrap-hash").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/v1/auth/**", "/error").permitAll() 
+                .requestMatchers("/api/v1/auth/**", "/error","/api/auth/captcha").permitAll() 
                 .requestMatchers("/api/v1/master/aira/**").permitAll()
                 .requestMatchers("/api/v1/master/reports/orchestrate/**").permitAll()
                 .requestMatchers("/api/v1/master/gateway/orchestrate/**").permitAll()

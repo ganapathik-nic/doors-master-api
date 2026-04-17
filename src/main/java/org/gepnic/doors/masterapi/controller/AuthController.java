@@ -4,11 +4,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.config.JwtUtils;
 import org.gepnic.doors.masterapi.dto.ApiResponse;
+import org.gepnic.doors.masterapi.dto.CaptchaResponse;
 import org.gepnic.doors.masterapi.dto.LoginRequest;
 import org.gepnic.doors.masterapi.dto.RegistrationRequest;
 import org.gepnic.doors.masterapi.model.User;
 import org.gepnic.doors.masterapi.repository.AgentRepository;
 import org.gepnic.doors.masterapi.repository.UserRepository;
+import org.gepnic.doors.masterapi.service.CaptchaService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.AuthenticationEventPublisher;
@@ -19,6 +22,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -34,6 +39,22 @@ public class AuthController {
     private final AgentRepository agentRepository;
     private final JdbcTemplate jdbcTemplate;
     private final AuthenticationEventPublisher eventPublisher;
+    private final CaptchaService captchaService;
+    // Simple local cache: Key = CaptchaID, Value = ExpectedText
+    private final Map<String, String> captchaCache = new ConcurrentHashMap<>();
+
+    @GetMapping("/captcha")
+    public ResponseEntity<CaptchaResponse> getCaptcha() {
+        String captchaId = UUID.randomUUID().toString();
+        String captchaText = captchaService.generateText();
+        
+        // Store in cache for 2 minutes (you can add a cleanup task later)
+        captchaCache.put(captchaId, captchaText);
+        
+        String base64Image = captchaService.generateBase64Image(captchaText);
+        return ResponseEntity.ok(new CaptchaResponse(captchaId, base64Image));
+    }
+    
  @PostMapping("/logout")
     public ResponseEntity<?> logout(@RequestBody Map<String, String> request) {
         String username = request.get("username");
@@ -72,11 +93,25 @@ public class AuthController {
     }
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
+        // 🛡️ 1. Verify Captcha
+        String expectedText = captchaCache.get(loginRequest.captchaId());
+        if (expectedText == null || !expectedText.equalsIgnoreCase(loginRequest.captchaValue())) {
+            if (loginRequest.captchaId() != null) {
+                captchaCache.remove(loginRequest.captchaId()); 
+            }
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                 .body(Map.of("message", "Invalid or expired verification code"));
+        }
+        
+        captchaCache.remove(loginRequest.captchaId());
         log.info("DOORS-AUTH: Login attempt for user: {}", loginRequest.username());
         
         return userRepository.findByUsername(loginRequest.username())
             .map(user -> {
-                // 1. Password Check
+
+                // 🛡️ 2. Password Check (Standard BCrypt Match)
+                // loginRequest.password() is the SHA-256 string from Vue
+            
                 if (!passwordEncoder.matches(loginRequest.password(), user.getPasswordHash())) {
                     eventPublisher.publishAuthenticationFailure(
                         new BadCredentialsException("Invalid credentials"),
@@ -85,20 +120,20 @@ public class AuthController {
                     return ResponseEntity.status(401).body(Map.of("message", "Invalid credentials"));
                 }
 
-                // 2. Status Check
+                // 🛡️ 3. Status Check
                 if ("PENDING".equals(user.getStatus()) || Boolean.FALSE.equals(user.getIsActive())) {
                     return ResponseEntity.status(403).body(Map.of("message", "Account pending approval"));
                 }
 
-                // 3. Generate Token
+                // 🛡️ 4. Generate Token
                 String realToken = jwtUtils.generateToken(user.getUsername(), user.getRole());
 
-                // 🚀 Audit Success (Only happens here, once per login)
+                // 🚀 Audit Success
                 eventPublisher.publishAuthenticationSuccess(
                     new UsernamePasswordAuthenticationToken(user.getUsername(), null, new ArrayList<>())
                 );
 
-                // 4. Prepare Response
+                // 🛡️ 5. Prepare Response
                 Map<String, Object> response = new HashMap<>();
                 response.put("username", user.getUsername());
                 response.put("role", user.getRole());
@@ -115,8 +150,7 @@ public class AuthController {
                 );
                 return ResponseEntity.status(401).body(Map.of("message", "User not found"));
             });
-    }
-
+    } 
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@RequestBody Map<String, String> request) {
         String username = request.get("username");
@@ -146,15 +180,33 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> registerUser(@RequestBody RegistrationRequest request) {
+    public ResponseEntity<?> registerUser(@RequestBody RegistrationRequest regRequest) {
+        // 🛡️ 1. CAPTCHA VERIFICATION
+    String expectedText = captchaCache.get(regRequest.captchaId());
+    
+    if (expectedText == null || !expectedText.equalsIgnoreCase(regRequest.captchaValue())) {
+        if (regRequest.captchaId() != null) {
+            captchaCache.remove(regRequest.captchaId()); 
+        }
+        return ResponseEntity.badRequest().body(Map.of("message", "Invalid verification code"));
+    }
+    
+    // 🛡️ 2. BURN TOKEN & PROCEED
+    captchaCache.remove(regRequest.captchaId());
+    // 🚀 3. UNIQUE EMAIL CHECK (Place it here!)
+        // This ensures the user gets a 409 Conflict instead of a generic 500 error
+        if (userRepository.findByUsername(regRequest.email()).isPresent()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                                 .body(Map.of("message", "This email is already registered."));
+        }
         try {
             User user = new User();
-            user.setName(request.name());
-            user.setEmail(request.email());
-            user.setOrg(request.org());
-            user.setRole(request.role());
+            user.setName(regRequest.name());
+            user.setEmail(regRequest.email());
+            user.setOrg(regRequest.org());
+            user.setRole(regRequest.role());
             user.setStatus("PENDING");
-            user.setUsername(request.email()); 
+            user.setUsername(regRequest.email()); 
             user.setPasswordHash("PENDING_APPROVAL"); 
             user.setIsActive(false);
             user.setPasswordResetRequired(true);

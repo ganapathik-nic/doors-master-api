@@ -5,6 +5,7 @@ server:
     connection-timeout: 600000 # 10 minutes (matches your Apache ProxyTimeout)
     keep-alive-timeout: 600000
 spring:
+  main:headless: true  # 🛡️ Fix for Captcha generation on Linux/Headless servers
   datasource:
     url: jdbc:postgresql://localhost:5433/doors_registry
     username: doorsuser

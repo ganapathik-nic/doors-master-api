@@ -8,15 +8,15 @@ import org.gepnic.doors.masterapi.model.User;
 import org.gepnic.doors.masterapi.repository.AgentRepository;
 import org.gepnic.doors.masterapi.repository.UserRepository;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.jdbc.core.JdbcTemplate; // 🛡️ CRITICAL: Added this missing import
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -26,35 +26,42 @@ public class AgentExecutionService {
 
     private final AgentRepository agentRepository;
     private final UserRepository userRepository;
-    
-    /**
-     * Injected WebClient Builder (configured in WebConfig with 100MB buffer 
-     * and SSL bypass for government CAs).
-     */
     private final WebClient.Builder webClientBuilder;
+    private final JdbcTemplate jdbcTemplate; 
 
-    /**
-     * CORE SECURITY LOGIC: Intersection Check
-     */
+    private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
+        "(?i)(--|;|\\bUNION\\b|\\bSELECT\\b|\\bDROP\\b|\\bOR\\b\\s+\\d+=\\d+|\\bUPDATE\\b|\\bDELETE\\b)", 
+        Pattern.CASE_INSENSITIVE
+    );
+
     public List<String> getAuthorizedExecutionTargets(SqlTemplate template) {
         String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
         
-        User user = userRepository.findByUsername(currentUsername)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + currentUsername));
+        // Securely fetch authorized agents for the user
+        String authSql = "SELECT agent_id FROM user_authorized_agents WHERE user_name ILIKE ?";
+        List<String> userAuthorizedAgents = jdbcTemplate.queryForList(authSql, String.class, currentUsername);
 
-        List<String> queryAgents = template.getAuthorizedAgents();
-        List<String> userAgents = user.getAssignedAgents();
+        List<String> queryAllowedAgents = template.getAuthorizedAgents();
 
-        return queryAgents.stream()
-                .filter(userAgents::contains)
+        return queryAllowedAgents.stream()
+                .filter(userAuthorizedAgents::contains)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Executes the query on a single agent.
-     * Compatible with the original SQL using json_agg.
-     */
     public Map<String, Object> executeDryRun(String agentId, String sqlText, Map<String, Object> params) {
+        String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+
+        // 🛡️ Authorization Check
+        String checkMapping = "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name ILIKE ? AND agent_id = ?";
+        Integer count = jdbcTemplate.queryForObject(checkMapping, Integer.class, currentUsername, agentId);
+        
+        if (count == null || count == 0) {
+            log.error("🚨 SECURITY ALERT: Unauthorized dry-run attempt by {} on agent {}", currentUsername, agentId);
+            throw new SecurityException("Access Denied: You are not authorized to execute on agent " + agentId);
+        }
+
+        validateParams(params);
+
         Agent agent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new RuntimeException("Agent not found: " + agentId));
 
@@ -62,16 +69,12 @@ public class AgentExecutionService {
         
         Map<String, Object> requestPayload = new HashMap<>();
         requestPayload.put("sql", sqlText);
+        requestPayload.put("executedBy", currentUsername); 
         requestPayload.put("params", params != null ? params : new HashMap<>());
 
         try {
-            log.info("DOORS-MASTER: Fetching buffered result from {}...", agent.getDisplayName());
+            log.info("DOORS-MASTER: Secure dispatch to {}...", agent.getDisplayName());
             
-            /**
-             * We fetch the result as a List of Maps. 
-             * With original json_agg SQL, this list will contain exactly ONE row 
-             * where the JSON array is the first column.
-             */
             List<Map<String, Object>> resultData = webClientBuilder.build()
                 .post()
                 .uri(targetUrl)
@@ -97,10 +100,9 @@ public class AgentExecutionService {
         }
     }
 
-    /**
-     * Orchestrated Execution across all authorized nodes.
-     */
     public Map<String, Object> executeOrchestratedReport(SqlTemplate template, Map<String, Object> userProvidedParams) {
+        validateParams(userProvidedParams);
+
         List<String> targetAgentIds = getAuthorizedExecutionTargets(template);
         if (targetAgentIds.isEmpty()) {
             throw new SecurityException("No authorized nodes assigned to your account for this report.");
@@ -108,10 +110,20 @@ public class AgentExecutionService {
 
         Map<String, Object> globalResults = new HashMap<>();
         for (String agentId : targetAgentIds) {
-            log.info("DOORS-MASTER: Dispatching orchestration to agent: {}", agentId);
             Map<String, Object> result = executeDryRun(agentId, template.getSqlText(), userProvidedParams);
             globalResults.put(agentId, result);
         }
         return globalResults;
+    }
+
+    private void validateParams(Map<String, Object> params) {
+        if (params == null) return;
+        for (Object value : params.values()) {
+            if (value instanceof String strValue) {
+                if (SQL_INJECTION_PATTERN.matcher(strValue).find()) {
+                    throw new SecurityException("Security Violation: Malicious patterns detected in input.");
+                }
+            }
+        }
     }
 }

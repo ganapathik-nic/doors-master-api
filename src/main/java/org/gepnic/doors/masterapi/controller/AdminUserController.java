@@ -54,7 +54,7 @@ public class AdminUserController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @PatchMapping("/{id}/role")
+    @PutMapping("/{id}/role")
     public ResponseEntity<?> updateRole(@PathVariable Long id, @RequestBody Map<String, String> body) {
         return userRepository.findById(id).map(user -> {
             if (body.containsKey("role")) {

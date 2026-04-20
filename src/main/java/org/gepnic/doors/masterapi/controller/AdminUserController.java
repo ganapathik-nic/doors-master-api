@@ -23,7 +23,7 @@ public class AdminUserController {
     }
 
     @PostMapping("/{id}/approve")
-    public ResponseEntity<?> approveUser(@PathVariable Long id, @RequestBody(required = false) Map<String, String> body) {
+    public ResponseEntity<?> approveUser(@PathVariable Integer id, @RequestBody(required = false) Map<String, String> body) {
         return userRepository.findById(id).map(user -> {
             user.setStatus("ACTIVE");
             user.setIsActive(true);
@@ -43,7 +43,7 @@ public class AdminUserController {
     }
 
     @PostMapping("/{id}/reject")
-    public ResponseEntity<?> rejectUser(@PathVariable Long id, @RequestBody(required = false) Map<String, String> body) {
+    public ResponseEntity<?> rejectUser(@PathVariable Integer id, @RequestBody(required = false) Map<String, String> body) {
         return userRepository.findById(id).map(user -> {
             String reason = (body != null) ? body.get("reason") : "No reason provided";
             user.setStatus("REJECTED");
@@ -55,7 +55,7 @@ public class AdminUserController {
     }
 
     @PutMapping("/{id}/role")
-    public ResponseEntity<?> updateRole(@PathVariable Long id, @RequestBody Map<String, String> body) {
+    public ResponseEntity<?> updateRole(@PathVariable Integer id, @RequestBody Map<String, String> body) {
         return userRepository.findById(id).map(user -> {
             if (body.containsKey("role")) {
                 user.setRole(body.get("role"));

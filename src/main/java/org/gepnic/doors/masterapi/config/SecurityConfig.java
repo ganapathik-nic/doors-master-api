@@ -44,7 +44,8 @@ public class SecurityConfig {
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-API-KEY", "Accept", "Origin"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(Arrays.asList("X-API-KEY", "Authorization"));
-        
+        configuration.addExposedHeader("X-Session-Status");
+        configuration.setExposedHeaders(Arrays.asList("X-Session-Status", "Authorization"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

@@ -66,6 +66,11 @@ public class AuthController {
 
         try {
             // 🚀 RAW SQL to bypass any JPA/Spring Transactional issues
+            // 🚀 Clear the session ID in DB to invalidate the current token immediately
+            userRepository.findByUsername(username).ifPresent(user -> {
+                user.setCurrentSessionId(null);
+                userRepository.save(user);
+            });
             String sql = "INSERT INTO unified_audit_logs (" +
                          "event_type, username, query_name, endpoint, method, " +
                          "status_code, duration_ms, record_count, full_command, execution_time" +
@@ -126,8 +131,12 @@ public class AuthController {
                 }
 
                 // 🛡️ 4. Generate Token
-                String realToken = jwtUtils.generateToken(user.getUsername(), user.getRole());
+// This creates a fresh ID, saves it to the DB object, then persists it
+String newSessionId = UUID.randomUUID().toString();
+user.setCurrentSessionId(newSessionId); 
+userRepository.save(user); // This pushes the ID to the PostgreSQL column
 
+String realToken = jwtUtils.generateToken(user.getUsername(), user.getRole(), newSessionId);
                 // 🚀 Audit Success
                 eventPublisher.publishAuthenticationSuccess(
                     new UsernamePasswordAuthenticationToken(user.getUsername(), null, new ArrayList<>())

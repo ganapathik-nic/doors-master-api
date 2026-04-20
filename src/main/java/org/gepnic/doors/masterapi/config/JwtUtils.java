@@ -1,74 +1,73 @@
 package org.gepnic.doors.masterapi.config;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.security.Keys;
+import com.nimbusds.jose.*;
+import com.nimbusds.jose.crypto.DirectDecrypter;
+import com.nimbusds.jose.crypto.DirectEncrypter;
+import com.nimbusds.jwt.EncryptedJWT;
+import com.nimbusds.jwt.JWTClaimsSet;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
+import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.Map;
 
 @Component
 public class JwtUtils {
-    // 1. Fixed string (Must be 32+ characters for HS256)
-    private static final String SECRET_STRING = "your-very-secure-and-very-long-secret-key-for-gepnic-doors-2026";
-    private static final SecretKey key = Keys.hmacShaKeyFor(SECRET_STRING.getBytes(StandardCharsets.UTF_8));
-    
+
+    private SecretKey ephemeralKey; // 🛡️ Exists only in JVM RAM
     private static final long EXPIRATION_TIME = 8 * 60 * 60 * 1000; // 8 Hours
 
-    /**
-     * UPDATED: Now includes the 'role' claim in the payload
-     */
-    public String generateToken(String username, String role) {
-        return Jwts.builder()
-                .setSubject(username)
-                .claim("role", role) // This is CRITICAL for the Filter to work
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .signWith(key, SignatureAlgorithm.HS256)
-                .compact();
-    }
-
-    /**
-     * Extracts the role claim from the JWT body
-     */
-    public String getRoleFromToken(String token) {
+    @PostConstruct
+    public void init() {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(key)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-            
-            return claims.get("role", String.class);
+            // 🛡️ Generate a fresh AES-256 key every time the Master-API starts
+            KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+            keyGen.init(256);
+            this.ephemeralKey = keyGen.generateKey();
+            System.out.println("🛡️ DOORS: Ephemeral JWE Key generated successfully.");
         } catch (Exception e) {
-            System.out.println("Role Extraction Error: " + e.getMessage());
-            return null;
+            throw new RuntimeException("Failed to initialize Ephemeral Key", e);
         }
     }
 
-    public String getUsernameFromToken(String token) {
+    /**
+     * GENERATE: Now creates an ENCRYPTED (JWE) token
+     */
+    public String generateToken(String username, String role, String sessionId) {
         try {
-            return Jwts.parserBuilder()
-                    .setSigningKey(key)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody()
-                    .getSubject();
+            JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
+                    .subject(username)
+                    .claim("role", role)
+                    .claim("sid", sessionId) // 🛡️ CRITICAL: Single Session ID
+                    .issueTime(new Date())
+                    .expirationTime(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                    .build();
+
+            // Header for Direct Encryption using AES-GCM
+            JWEHeader header = new JWEHeader(JWEAlgorithm.DIR, EncryptionMethod.A256GCM);
+
+            EncryptedJWT jwe = new EncryptedJWT(header, claimsSet);
+            jwe.encrypt(new DirectEncrypter(this.ephemeralKey));
+
+            return jwe.serialize();
         } catch (Exception e) {
             return null;
         }
     }
 
-    public boolean validateToken(String token) {
+    /**
+     * DECRYPT & PARSE: Decodes the encrypted payload
+     */
+    public Map<String, Object> parseToken(String token) {
         try {
-            Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
-            return true;
+            EncryptedJWT jwe = EncryptedJWT.parse(token);
+            jwe.decrypt(new DirectDecrypter(this.ephemeralKey));
+            return jwe.getJWTClaimsSet().getClaims();
         } catch (Exception e) {
-            System.out.println("JWT Validation Error: " + e.getMessage());
-            return false;
+            // If Master-API restarted, old tokens will fail here (Key mismatch)
+            return null;
         }
     }
 }

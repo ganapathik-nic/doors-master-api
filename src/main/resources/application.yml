@@ -19,7 +19,7 @@ spring:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
         implicit-strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyJpaImpl     
        
-      ddl-auto: update   
+      ddl-auto: none # We manage our schema with Flyway, so no auto changes   
     show-sql: true
     properties:
       hibernate:
@@ -35,13 +35,29 @@ spring:
       max-request-size: 100MB
       enabled: true
 # Portal Registry
+doors:
+  security:
+    rate-limit:
+      # Policy for Human Interactive Users (UI)
+      ui:
+        capacity: 10          # Number of clicks allowed in the burst
+        refill-minutes: 1     # How often the bucket refills fully
+        penalty-minutes: 1    # (Logic-only) Duration for strict lockout if needed
+      # Policy for the Trusted Orchestration Server (API Gateway)
+      gateway:
+        capacity: 5       # Much higher for automated system loops
+        refill-minutes: 1
+    jwt-expiration-ms: 14400000 #4 hours
+    # Define which paths are considered "Gateway"
+    # This keeps your Filter code clean
+    gateway-path-pattern: "/v1/master/gateway/orchestrate/"     
 app:
   portals:
     - id: "PORTAL_01"
       name: "Main Portal"
       url: "http://localhost:8051"
   security:
-    enabled: false # Set to false to allow browser testing from any IP
+    enabled: true # Set to false to allow browser testing from any IP
     # This is your whitelist. Add your Master API's IP here.
     # You can override this in production using the environment variable: ALLOWED_MASTERS
     allowed-masters: ${ALLOWED_MASTERS:10.246.129.229,10.246.129.225,localhost,127.0.0.1,0:0:0:0:0:0:0:1}

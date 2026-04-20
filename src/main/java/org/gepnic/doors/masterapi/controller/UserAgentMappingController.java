@@ -37,7 +37,7 @@ public class UserAgentMappingController {
     @Transactional
     @PutMapping("/admin/mappings/user/{userId}/agents")
     public ResponseEntity<ApiResponse<?>> updateMappings(
-            @PathVariable Long userId, 
+            @PathVariable Integer userId, 
             @RequestBody List<String> agentIds) {
         
         log.info("DOORS-ADMIN: Updating matrix for User ID: {}", userId);

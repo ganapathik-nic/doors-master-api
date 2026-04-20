@@ -66,7 +66,8 @@ public class User {
     )
     @Column(name = "agent_id")
     private List<String> assignedAgents = new ArrayList<>();
-
+@Column(name = "current_session_id")
+private String currentSessionId;
     // Helper method to ensure list is never null
     public List<String> getAssignedAgents() {
         if (this.assignedAgents == null) {
@@ -74,4 +75,11 @@ public class User {
         }
         return this.assignedAgents;
     }
+    public String getCurrentSessionId() {
+    return currentSessionId;
+}
+
+public void setCurrentSessionId(String currentSessionId) {
+    this.currentSessionId = currentSessionId;
+}
 }

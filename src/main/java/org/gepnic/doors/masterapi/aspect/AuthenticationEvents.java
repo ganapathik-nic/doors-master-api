@@ -20,53 +20,50 @@ import java.time.LocalDateTime;
 public class AuthenticationEvents {
 
     private final JdbcTemplate jdbcTemplate;
+
     @EventListener
     @Transactional
     public void onFailure(AbstractAuthenticationFailureEvent failure) {
         String username = failure.getAuthentication().getName();
         String error = failure.getException().getMessage();
-        
-        // 🚀 Dynamic Endpoint Check for Failure
-        String endpoint = "/api/v1/auth/login"; 
-        try {
-            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attrs != null) {
-                endpoint = attrs.getRequest().getRequestURI();
-            }
-        } catch (Exception e) {}
+        String endpoint = getRequestUri();
 
         log.warn("AUDIT: Login Failure for user [{}] - Reason: {}", username, error);
         
-        // 🚀 Now passing the 5th parameter (endpoint)
         saveAuthLog(username, "LOGIN_FAILURE", error, 401, endpoint);
     }
-    @EventListener
-    @Transactional
-    public void onSuccess(AuthenticationSuccessEvent success) {
-        String username = success.getAuthentication().getName();
-        
-        // 1. Default values
-        String action = "LOGIN_SUCCESS";
-        String endpoint = "/api/v1/auth/login";
 
-        // 2. 🚀 The "URI Sniffer" with Fallback
+    @EventListener
+@Transactional
+public void onSuccess(AuthenticationSuccessEvent success) {
+    String username = success.getAuthentication().getName();
+    String endpoint = getRequestUri();
+    
+    // Sniff the salt from the request for the audit log
+    String captchaId = getRequestParameter("captchaId");
+
+    log.info("AUDIT: Success for [{}] with Nonce [{}]", username, captchaId);
+    saveAuthLog(username, "LOGIN_SUCCESS", "Authenticated with Salt: " + captchaId, 200, endpoint);
+}
+
+    private String getRequestUri() {
         try {
             ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attrs != null && attrs.getRequest() != null) {
-                String uri = attrs.getRequest().getRequestURI();
-                if (uri != null) {
-                    endpoint = uri;
-                    if (uri.contains("/logout")) {
-                        action = "LOGOUT";
-                    }
-                }
+                return attrs.getRequest().getRequestURI();
             }
-        } catch (Exception e) {
-            log.warn("Audit: Could not determine URI, defaulting to LOGIN_SUCCESS info");
-        }
+        } catch (Exception e) {}
+        return "/api/v1/auth/login";
+    }
 
-        // 3. 🚀 Ensure saveAuthLog gets the endpoint
-        saveAuthLog(username, action, "Authentication event", 200, endpoint);
+    private String getRequestParameter(String paramName) {
+        try {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null && attrs.getRequest() != null) {
+                return attrs.getRequest().getParameter(paramName);
+            }
+        } catch (Exception e) {}
+        return "N/A";
     }
 
     private void saveAuthLog(String username, String action, String detail, int status, String endpoint) {
@@ -94,12 +91,11 @@ public class AuthenticationEvents {
                 clientIp,
                 detail,
                 0,
-                "Session event at " + java.time.LocalDateTime.now()
+                "Audit Entry: " + LocalDateTime.now()
             );
             log.info("AUDIT-DB-SUCCESS: {} logged for user {}", action, username);
         } catch (Exception e) {
             log.error("AUDIT-DB-ERROR: Failed to insert auth log: {}", e.getMessage());
         }
     }
-    
 }

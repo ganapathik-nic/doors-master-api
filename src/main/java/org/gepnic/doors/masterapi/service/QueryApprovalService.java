@@ -1,21 +1,43 @@
 package org.gepnic.doors.masterapi.service;
 
+import lombok.RequiredArgsConstructor;
 import org.gepnic.doors.masterapi.model.SqlTemplate;
 import org.gepnic.doors.masterapi.repository.SqlTemplateRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
+@RequiredArgsConstructor // Automatically handles constructor injection for final fields
 public class QueryApprovalService {
 
     private final SqlTemplateRepository sqlTemplateRepository;
+    private final JdbcTemplate jdbcTemplate; // Required for raw SQL on data_pull_requests
 
-    public QueryApprovalService(SqlTemplateRepository sqlTemplateRepository) {
-        this.sqlTemplateRepository = sqlTemplateRepository;
-    }
-
+    /**
+     * Fetch assignments for Developers.
+     * Selects approved data requests that need an SQL fulfillment.
+     */
+ public List<Map<String, Object>> getApprovedDataRequests() {
+    // Wrap aliases in double quotes \" to force CamelCase keys in the Map
+    String sql = "SELECT " +
+                 "requestid as \"id\", " +             
+                 "request_title as \"requestTitle\", " + 
+                 "target_agent_id as \"targetAgentId\", " + 
+                 "requested_by as \"requestedBy\", " +   
+                 "justification, " +
+                 "samplejson as \"sampleJson\", " +      
+                 "attachmentname as \"attachmentName\", " + 
+                 "updated_at as \"approvedAt\" " +         
+                 "FROM data_pull_requests " +
+                 "WHERE status = 'APPROVED' " +
+                 "ORDER BY createdat DESC";
+    
+    return jdbcTemplate.queryForList(sql);
+}
     /**
      * Proposer Flow: Submit a new SQL query for review.
      */
@@ -41,7 +63,7 @@ public class QueryApprovalService {
     }
 
     /**
-     * Approver Flow: Admin rejects the query with a reason.
+     * Admin rejects the query with a reason.
      */
     @Transactional
     public SqlTemplate rejectQuery(Long queryId, String adminId, String reason) {

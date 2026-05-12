@@ -30,7 +30,13 @@ public interface AgentRepository extends JpaRepository<Agent, String> {
      * Specifically added to resolve the 'cannot find symbol' error in AgentService.
      */
     List<Agent> findByIsActiveTrueAndIsSandbox(Boolean isSandbox);
-
+/**
+     * ASPECT 1c: PRODUCTION MAPPING FILTER
+     * Specifically for Query Library Mappings. 
+     * Enforces: Must be a Production Node (not sandbox) AND must be Active.
+     */
+    @Query("SELECT a FROM Agent a WHERE a.isSandbox = false AND a.isActive = true")
+    List<Agent> findActiveProductionAgents();
     /**
      * ASPECT 2: Standard Active List
      * Used by the Admin Governance dashboard to show all available execution nodes.

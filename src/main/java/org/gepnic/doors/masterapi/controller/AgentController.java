@@ -5,16 +5,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.dto.ApiResponse;
 import org.gepnic.doors.masterapi.model.Agent;
 import org.gepnic.doors.masterapi.service.AgentService;
+ 
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-
+ 
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/master/agents")
 @RequiredArgsConstructor
 public class AgentController {
-
+ 
     // Must be final for Lombok's @RequiredArgsConstructor to inject it
     private final AgentService agentService;
 
@@ -23,6 +24,8 @@ public class AgentController {
      * Proposers get sandbox-only nodes; Admins get all active nodes.
      * URL: /api/v1/master/agents/list/active?isSandbox=true
      */
+    // InfrastructureController.java
+ 
     @GetMapping("/list/active")
     public ApiResponse<List<Agent>> getActiveAgents(
             @RequestParam(required = false) Boolean isSandbox) {

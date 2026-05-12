@@ -12,7 +12,7 @@ import java.util.Random;
 public class CaptchaService {
 
     private final Random random = new Random();
-    private final String SOURCES = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // O and 0 removed for clarity
+    private final String SOURCES = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // O and 0 removed for clarity
 
     public String generateText() {
         StringBuilder sb = new StringBuilder();
@@ -55,4 +55,4 @@ public class CaptchaService {
             throw new RuntimeException("Failed to generate Captcha Image");
         }
     }
-}
+} 

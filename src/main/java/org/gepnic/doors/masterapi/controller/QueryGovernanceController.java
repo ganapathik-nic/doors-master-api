@@ -51,7 +51,22 @@ public class QueryGovernanceController {
             ));
         }
     }
-
+/**
+     * Fetch all Data Requests approved by Governance but not yet fulfilled by SQL.
+     * This populates the "Pending Assignments" for developers.
+     */
+    @GetMapping("/requests/approved")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getApprovedRequests() {
+        log.info("DOORS-MASTER: Fetching approved data requests for developer queue");
+        try {
+            // Logic: Fetch from data_pull_requests where status = 'APPROVED'
+            List<Map<String, Object>> approvedRequests = approvalService.getApprovedDataRequests();
+            return ResponseEntity.ok(ApiResponse.success(approvedRequests, "Approved requests fetched"));
+        } catch (Exception e) {
+            log.error("DOORS-MASTER: Failed to fetch approved requests", e);
+            return ResponseEntity.internalServerError().body(ApiResponse.error("Failed to load assignments"));
+        }
+    }
 /**
  * Controller for DOORS Governance.
  * Handles the Proposer/Approver workflow for the 50-member team.

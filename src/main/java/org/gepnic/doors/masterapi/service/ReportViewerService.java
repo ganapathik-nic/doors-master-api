@@ -21,7 +21,7 @@ import java.sql.Array;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-
+import org.gepnic.doors.masterapi.dto.ReportResult;
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -72,8 +72,9 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
                 )).collect(Collectors.toList());
     }
 
-    public List<Map<String, Object>> executeReport(ReportExecutionRequest request) {
+     public ReportResult executeReport(ReportExecutionRequest request) {
         List<Map<String, Object>> aggregatedResults = new ArrayList<>();
+        List<String> offlineAgents = new ArrayList<>();
         int actualAuditCount = 0;
 
         try {
@@ -87,8 +88,9 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
             Map<String, Object> sanitizedParams = sanitizeParams(request.getParams());
 
             for (String agentId : targetAgentIds) {
+                String agentIdTrimmed = agentId.trim();
                 try {
-                    String agentUrl = fetchAgentUrl(agentId.trim());
+                    String agentUrl = fetchAgentUrl(agentIdTrimmed);
                     String endpoint = buildEndpoint(agentUrl);
 
                     Map<String, Object> payload = new HashMap<>();
@@ -96,6 +98,7 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
                     payload.put("executedBy", request.getPerformedBy());
                     payload.put("params", sanitizedParams);
 
+                    // 🛡️ Execute Remote Call
                     ResponseEntity<String> response = restTemplate.postForEntity(endpoint, payload, String.class);
                     String rawBody = response.getBody();
 
@@ -104,7 +107,7 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
 
                         for (Map<String, Object> complexRow : rows) {
                             Map<String, Object> flatRow = new HashMap<>();
-                            flatRow.put("NODE_ID", agentId.trim());
+                            flatRow.put("NODE_ID", agentIdTrimmed);
 
                             complexRow.forEach((key, value) -> {
                                 if (value instanceof Map) {
@@ -120,22 +123,24 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
                         actualAuditCount += rows.size();
                     }
                 } catch (Exception nodeEx) {
-                    log.error("DOORS-MASTER: Node [{}] error: {}", agentId, nodeEx.getMessage());
+                    // 🚀 THE CHANGE: Capture the offline agent instead of just logging it
+                    log.error("DOORS-MASTER: Node [{}] is Offline or Error: {}", agentIdTrimmed, nodeEx.getMessage());
+                    offlineAgents.add(agentIdTrimmed);
                 }
             }
 
             setRecordCountForAudit(actualAuditCount);
-            return aggregatedResults;
+            
+            // Return both the data and the list of failed nodes
+            return new ReportResult(aggregatedResults, offlineAgents);
 
         } catch (SecurityException se) {
-            // Re-throw security violations to be caught by the Controller (403)
             throw se;
         } catch (Exception e) {
-            log.error("DOORS-MASTER: Critical failure", e);
+            log.error("DOORS-MASTER: Critical failure during report execution", e);
             throw e;
         }
     }
-
     /**
      * 🛡️ Scans text parameters for malicious SQL patterns to trigger 403 Forbidden.
      */

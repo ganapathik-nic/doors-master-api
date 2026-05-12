@@ -12,6 +12,7 @@ import org.gepnic.doors.masterapi.service.MappingService;
 import org.gepnic.doors.masterapi.service.TemplateService;
 import org.gepnic.doors.masterapi.util.EncryptionUtils;
 import org.gepnic.doors.masterapi.util.SqlSecurityValidator;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -246,13 +247,14 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
             .map(t -> ResponseEntity.ok(ApiResponse.success(t, "Loaded")))
             .orElse(ResponseEntity.status(404).body(ApiResponse.error("Not found", 404)));
     }
+
 @GetMapping("/infrastructure/agents/list/active")
 public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getActiveAgents() {
     log.info("DOORS-MASTER: Fetching active remote agents from registry");
     try {
         // Query only ACTIVE agents to filter out ARCHIVED one
         String sql = "SELECT agent_id as \"agentId\", display_name as \"displayName\" " +
-                     "FROM agents WHERE status = 'ACTIVE' ORDER BY agent_id ASC";
+                     "FROM agents WHERE is_active =true ORDER BY agent_id ASC";
         
         List<Map<String, Object>> agents = jdbcTemplate.queryForList(sql);
         return ResponseEntity.ok(ApiResponse.success(agents, "Active agents retrieved"));
@@ -261,34 +263,67 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getActiveAgents() 
         return ResponseEntity.status(500).body(ApiResponse.error("Registry lookup failed", 500));
     }
 }
-@PostMapping("/test-dry-run")
+ 
+ @PostMapping("/test-dry-run")
 public ResponseEntity<ApiResponse<Object>> testQuery(@RequestBody Map<String, Object> payload) {
+    // 1. Extract fields with standard DOORS naming conventions
     String agentId = (String) payload.get("agentId");
-    String encryptedSql = (String) payload.get("sqlText"); // This is the AES string
+    
+    // 🛡️ FIX: Check for 'base64Sql' first, fallback to 'sqlText' to prevent null 'src'
+    String base64Payload = (String) payload.get("base64Sql");
+    if (base64Payload == null) {
+        base64Payload = (String) payload.get("sqlText");
+    }
     
     @SuppressWarnings("unchecked")
     Map<String, Object> params = (Map<String, Object>) payload.get("params");
 
     try {
-        // 🛡️ 1. DECRYPT: Turn the gibberish back into a SQL string
-        String sql = EncryptionUtils.decrypt(encryptedSql);
-        log.info("DOORS-SECURITY: Decrypted SQL for dry-run on agent {}", agentId);
-
-        // 🛡️ 2. VALIDATE: Check the actual SQL after decryption
-        if (!SqlSecurityValidator.isSafeSelectOnly(sql)) {
-            log.warn("DOORS-SECURITY-ALERT: Unauthorized SQL pattern detected after decryption!");
-            return ResponseEntity.status(403).body(ApiResponse.error("Security Violation: Only SELECT queries allowed", 403));
+        // 2. Validate Agent Selection
+        if (agentId == null || agentId.isEmpty()) {
+            return ResponseEntity.status(400)
+                    .body(ApiResponse.error("Please select a target Agent node", 400));
         }
 
-        // 🛡️ 3. EXECUTE: Proceed with the safe, decrypted SQL
-        Map<String, Object> result = agentExecutionService.executeDryRun(agentId, sql, params);
-        return ResponseEntity.ok(ApiResponse.success((Object)result, "Dry-run result retrieved successfully"));
+        // 3. EXECUTE (The service now handles the Base64 decoding & scrubbing internally)
+        Map<String, Object> result = agentExecutionService.executeDryRun(agentId, base64Payload, params);
+
+        // 4. SUCCESS RESPONSE
+        if (result == null || result.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.success(new HashMap<>(), "Query successful, but returned no data."));
+        }
+        
+        return ResponseEntity.ok(ApiResponse.success((Object)result, "Dry-run completed successfully"));
+
+    } catch (IllegalArgumentException iae) {
+        // Catch the Base64/Null errors we added to the Service
+        return ResponseEntity.status(400)
+                .body(ApiResponse.error(iae.getMessage(), 400));
+                
+    } catch (SecurityException se) {
+        return ResponseEntity.status(403)
+                .body(ApiResponse.error("Security Violation: " + se.getMessage(), 403));
 
     } catch (Exception e) {
-        log.error("DOORS-AUTH-CRITICAL: Decryption or Execution failed: {}", e.getMessage());
-        return ResponseEntity.status(400).body(ApiResponse.error("Request Processing Error: Invalid payload encryption", 400));
+        String errorMsg = e.getMessage() != null ? e.getMessage() : "Unknown execution error";
+        String errorType = e.getClass().getName();
+        
+        log.error("DOORS-DRYRUN-FAILURE: Type: {}, Message: {}", errorType, errorMsg);
+
+        // 🚀 THE FIX: Catch connection-related errors and transform the message
+        if (errorType.contains("Connect") || 
+            errorType.contains("Timeout") || 
+            errorType.contains("ResourceAccess") || 
+            errorMsg.contains("Connection refused") ||
+            errorMsg.contains("finishConnect")) {
+            
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(ApiResponse.error("Remote agent [" + agentId + "] is Offline or unreachable", 503));
+        }
+
+        // Fallback for SQL syntax or other processing errors
+        return ResponseEntity.status(400)
+                .body(ApiResponse.error("Execution error: " + errorMsg, 400));
     }
-}    
-
-
+}
 }

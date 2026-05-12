@@ -48,74 +48,68 @@ public class AgentExecutionService {
                 .collect(Collectors.toList());
     }
 
-    public Map<String, Object> executeDryRun(String agentId, String sqlText, Map<String, Object> params) {
-        String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+    // In AgentExecutionService.java
+ public Map<String, Object> executeDryRun(String agentId, String base64Sql, Map<String, Object> params) {
+    String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
 
-        // 🛡️ Authorization Check
-        String checkMapping = "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name ILIKE ? AND agent_id = ?";
-        Integer count = jdbcTemplate.queryForObject(checkMapping, Integer.class, currentUsername, agentId);
-        
-        if (count == null || count == 0) {
-            log.error("🚨 SECURITY ALERT: Unauthorized dry-run attempt by {} on agent {}", currentUsername, agentId);
-            throw new SecurityException("Access Denied: You are not authorized to execute on agent " + agentId);
-        }
-
-        validateParams(params);
-
-        Agent agent = agentRepository.findById(agentId)
-                .orElseThrow(() -> new RuntimeException("Agent not found: " + agentId));
-
-        String targetUrl = agent.getBaseUrl() + "/doorsagent/v1/agent/query/execute";
-        
-        Map<String, Object> requestPayload = new HashMap<>();
-        requestPayload.put("sql", sqlText);
-        requestPayload.put("executedBy", currentUsername); 
-        requestPayload.put("params", params != null ? params : new HashMap<>());
-
-        try {
-            log.info("DOORS-MASTER: Secure dispatch to {}...", agent.getDisplayName());
-            
-            List<Map<String, Object>> resultData = webClientBuilder.build()
-                .post()
-                .uri(targetUrl)
-                .bodyValue(requestPayload)
-                .retrieve()
-                .bodyToFlux(new ParameterizedTypeReference<Map<String, Object>>() {})
-                .timeout(Duration.ofMinutes(10)) 
-                .collectList()
-                .block();
-
-            Map<String, Object> responseMap = new HashMap<>();
-            responseMap.put("success", true);
-            responseMap.put("data", resultData); 
-            responseMap.put("node", agentId);
-            return responseMap;
-
-        } catch (Exception e) {
-            log.error("DOORS-MASTER: Agent Communication Failure: {}", e.getMessage());
-            Map<String, Object> errorMap = new HashMap<>();
-            errorMap.put("success", false);
-            errorMap.put("message", "Agent Communication Error: " + e.getMessage());
-            return errorMap;
-        }
+    // 🛡️ 1. NULL GUARD: Prevent the "src is null" crash
+    if (base64Sql == null || base64Sql.trim().isEmpty()) {
+        throw new IllegalArgumentException("SQL payload (base64Sql) is missing or null");
     }
 
-    public Map<String, Object> executeOrchestratedReport(SqlTemplate template, Map<String, Object> userProvidedParams) {
-        validateParams(userProvidedParams);
-
-        List<String> targetAgentIds = getAuthorizedExecutionTargets(template);
-        if (targetAgentIds.isEmpty()) {
-            throw new SecurityException("No authorized nodes assigned to your account for this report.");
-        }
-
-        Map<String, Object> globalResults = new HashMap<>();
-        for (String agentId : targetAgentIds) {
-            Map<String, Object> result = executeDryRun(agentId, template.getSqlText(), userProvidedParams);
-            globalResults.put(agentId, result);
-        }
-        return globalResults;
+    // 🛡️ 2. Authorization Logic
+    String checkMapping = "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name ILIKE ? AND agent_id = ?";
+    Integer count = jdbcTemplate.queryForObject(checkMapping, Integer.class, currentUsername, agentId);
+    
+    if (count == null || count == 0) {
+        throw new SecurityException("Security Violation: Access Denied for agent " + agentId);
     }
 
+    // 🛡️ 3. DECODE & SCRUB: Convert Base64 back to SQL and remove whitespace (Char 20 fix)
+    String decodedSql;
+    try {
+        // Use MimeDecoder to be lenient with spaces/newlines in production
+        byte[] decodedBytes = Base64.getMimeDecoder().decode(base64Sql.replaceAll("\\s", ""));
+        decodedSql = new String(decodedBytes);
+    } catch (Exception e) {
+        log.error("DOORS-MASTER: Base64 Decoding failed for agent {}", agentId);
+        throw new IllegalArgumentException("Invalid Base64 encoding in SQL payload");
+    }
+
+    // 4. Resolve Agent URL
+    Agent agent = agentRepository.findById(agentId)
+            .orElseThrow(() -> new RuntimeException("Agent not found: " + agentId));
+
+    String targetUrl = agent.getBaseUrl() + "/doorsagent/v1/agent/query/execute";
+    
+    // 5. Prepare Payload (Sending the DECODED SQL to the agent)
+    Map<String, Object> requestPayload = new HashMap<>();
+    requestPayload.put("sql", decodedSql);
+    requestPayload.put("executedBy", currentUsername); 
+    requestPayload.put("params", params != null ? params : new HashMap<>());
+
+    // 6. Execute with 10-minute timeout for heavy NIC reports
+    log.info("DOORS-MASTER: Dispatching Dry-Run to {}...", agent.getDisplayName());
+    
+    List<Map<String, Object>> resultData = webClientBuilder.build()
+        .post()
+        .uri(targetUrl)
+        .bodyValue(requestPayload)
+        .retrieve()
+        .bodyToFlux(new ParameterizedTypeReference<Map<String, Object>>() {})
+        .timeout(Duration.ofMinutes(30)) 
+        .collectList()
+        .block(); 
+
+    Map<String, Object> responseMap = new HashMap<>();
+    responseMap.put("success", true);
+    responseMap.put("data", resultData); 
+    responseMap.put("node", agentId);
+    
+    return responseMap;
+}
+
+  
     private void validateParams(Map<String, Object> params) {
         if (params == null) return;
         for (Object value : params.values()) {

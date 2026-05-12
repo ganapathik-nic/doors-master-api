@@ -38,11 +38,11 @@ public class InfrastructureController {
     }
 
     @GetMapping("/agents/list")
-    public ResponseEntity<ApiResponse<List<Agent>>> getAllAgents() {
-        List<Agent> agents = agentRepository.findAll();
-        return ResponseEntity.ok(ApiResponse.success(agents, "Agent list retrieved"));
+    public ResponseEntity<ApiResponse<List<Agent>>> getActiveAgents() {
+        List<Agent> activeAgents = agentRepository.findByIsActiveTrue();
+        
+        return ResponseEntity.ok(ApiResponse.success(activeAgents, "Active nodes retrieved"));
     }
-
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<Agent>> registerAgent(@RequestBody Agent agent) {
         agent.setIsActive(true);

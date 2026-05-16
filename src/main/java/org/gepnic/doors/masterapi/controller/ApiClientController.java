@@ -33,15 +33,19 @@ public class ApiClientController {
    @GetMapping("/list-with-details")
 public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listClientsWithDetails() {
     log.info("DOORS-REGISTRY: Fetching client details...");
-    List<ApiClient> clients = apiClientRepository.findAll();
-    
+    List<ApiClient> clients = apiClientRepository.findAll().stream()
+    .sorted(Comparator.comparing(ApiClient::getClientName, String.CASE_INSENSITIVE_ORDER))
+                .collect(Collectors.toList());
     List<Map<String, Object>> response = clients.stream().map(client -> {
         Map<String, Object> map = new HashMap<>();
         map.put("clientId", client.getClientId());
         map.put("clientName", client.getClientName());
         map.put("apiKey", client.getApiKey());
         map.put("isActive", client.getIsActive());
-
+// 🚀 TRIPLE-BNDING PROTECTION: Eliminates Jackson serialization issues entirely
+            map.put("isEncryptionEnabled", client.isEncryptionEnabled());
+            map.put("encryptionEnabled", client.isEncryptionEnabled()); 
+            map.put("is_encryption_enabled", client.isEncryptionEnabled()); // 👈 Direct primitive snake_case fallback
         // 🚀 FIX: Instead of map.put("allowed_ips", client.getAllowedIps())
         // We use the virtual getter we added to the ApiClient entity
         map.put("ipWhitelist", client.getIpWhitelist()); 
@@ -71,7 +75,31 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listClientsWithDet
 
     return ResponseEntity.ok(ApiResponse.success(response, "Success"));
 }
+/**
+     * 🚀 NEW ENDPOINT: ONBOARDING DATA GOVERNANCE ENCRYPTION TOGGLE SWITCH
+     * Path: /api/v1/master/api-clients/{clientId}/toggle-encryption
+     */
+    @PostMapping("/{clientId}/toggle-encryption")
+    public ResponseEntity<ApiResponse<String>> toggleEncryption(
+            @PathVariable Long clientId, 
+            @RequestBody Map<String, Boolean> payload) {
+        
+        Boolean encryptionEnabled = payload.get("encryptionEnabled");
+        if (encryptionEnabled == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Parameter 'encryptionEnabled' is missing", 400));
+        }
 
+        log.info("DOORS-GOVERNANCE: Modifying data-security profile policy rules for Client ID: {}", clientId);
+        
+        ApiClient client = apiClientRepository.findById(clientId)
+                .orElseThrow(() -> new RuntimeException("API Client registry profile not found."));
+                
+        client.setEncryptionEnabled(encryptionEnabled);
+        apiClientRepository.save(client);
+
+        String modeMessage = encryptionEnabled ? "AES-256 Encryption active" : "Plain-text grace period active";
+        return ResponseEntity.ok(ApiResponse.success(null, modeMessage));
+    }
     /**
      * Updates the specific campus nodes (agents) authorized for an API client
      */

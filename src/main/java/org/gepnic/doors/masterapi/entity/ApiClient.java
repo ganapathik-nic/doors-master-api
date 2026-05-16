@@ -52,4 +52,7 @@ public class ApiClient {
         }
         return Arrays.asList(this.allowedIps.split("\\s*,\\s*"));
     }
+    // 🚀 THE MISSING BINDING FIELD
+    @Column(name = "is_encryption_enabled")
+    private boolean isEncryptionEnabled = true;
 }

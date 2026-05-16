@@ -10,6 +10,9 @@ import org.gepnic.doors.masterapi.service.ReportViewerService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;  // <--- THIS IS THE MISSING LINE
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.security.Principal;
 import java.util.List;
@@ -48,45 +51,53 @@ public class ReportViewerController {
     /**
      * SECURE EXECUTION: Updated to handle ReportResult (Partial Success Model)
      */
-    @PostMapping("/execute")
-    public ResponseEntity<ApiResponse<ReportResult>> executeReport(
-            @RequestBody ReportExecutionRequest request,
-            Principal principal) {
+    private final ObjectMapper objectMapper = new ObjectMapper();
+ @PostMapping("/execute")
+public ResponseEntity<?> executeReport(
+        @RequestBody ReportExecutionRequest request,
+        jakarta.servlet.http.HttpServletRequest httpRequest, 
+        Principal principal) {
 
-        String authenticatedUser = principal.getName();
-        request.setPerformedBy(authenticatedUser);
+    String authenticatedUser = principal.getName();
+    request.setPerformedBy(authenticatedUser);
+
+    try {
+        ReportResult result = reportViewerService.executeReport(request);
+        ApiResponse<ReportResult> finalResponse = ApiResponse.success(result, "Success");
 
         try {
-            // 🛡️ 1. Call the service and receive the new ReportResult Record
-            ReportResult result = reportViewerService.executeReport(request);
-            
-            // 🛡️ 2. Logic for total failure (All target agents are offline)
-           if (result.data().isEmpty() && !result.offlineAgents().isEmpty()) {
-    List<String> offline = result.offlineAgents();
-    String errorMsg;
+            String jsonResponse = objectMapper.writeValueAsString(finalResponse);
+            String authHeader = httpRequest.getHeader("Authorization");
+            String hybridKey = "D00RS-NIC-SECURE"; // Default
 
-    if (offline.size() == 1) {
-        errorMsg = "Remote agent [" + offline.get(0) + "] is Offline";
-    } else {
-        errorMsg = "Multiple agents are Offline: " + String.join(", ", offline);
-    }
+            if (authHeader != null && authHeader.contains("Bearer ")) {
+                // Remove prefix and any potential whitespace
+                String rawJwt = authHeader.replace("Bearer ", "").trim();
+                
+                // 🚀 ENSURE WE HAVE AT LEAST 8 CHARS TO SLICE
+                if (rawJwt.length() >= 8) {
+                    String systemPart = "D00RS-NI"; 
+                    String userPartSlice = rawJwt.substring(rawJwt.length() - 8);
+                    hybridKey = systemPart + userPartSlice;
+                }
+            }
 
-    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-            .body(ApiResponse.error(errorMsg, 503));
-}
-            // 🛡️ 3. Construct the dynamic success/partial success message
-            String message = result.offlineAgents().isEmpty() 
-                ? "Report executed successfully. " + result.data().size() + " rows returned."
-                : "Partial Success. Data retrieved from live nodes, but unreachable: " + result.offlineAgents();
+            // 🕵️‍♂️ CRITICAL: This MUST match the browser F12 console exactly
+            System.out.println("DOORS_DEBUG_KEY: [" + hybridKey + "]");
 
-            return ResponseEntity.ok(ApiResponse.success(result, message));
+            String encryptedPayload = org.gepnic.doors.masterapi.util.EncryptionUtils.encrypt(jsonResponse, hybridKey);
 
-        } catch (SecurityException se) {
-            log.warn("🚨 SECURITY VIOLATION: {} on agent {}", authenticatedUser, request.getAgentId());
-            return ResponseEntity.status(403).body(ApiResponse.error(se.getMessage(), 403));
-        } catch (Exception e) {
-            log.error("DOORS-ERROR: Execution failed for user: {}", authenticatedUser, e);
-            return ResponseEntity.status(500).body(ApiResponse.error("Query Execution Failed: " + e.getMessage(), 500));
+            return ResponseEntity.ok()
+                    .header("X-Content-Secure", "true")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("secureData", encryptedPayload, "info", "Hybrid Encrypted"));
+
+        } catch (Exception encryptEx) {
+            log.error("Encryption Failure", encryptEx);
+            return ResponseEntity.ok(finalResponse);
         }
+    } catch (Exception e) {
+        return ResponseEntity.status(500).body(ApiResponse.error("Execution Failed", 500));
     }
+}
 }

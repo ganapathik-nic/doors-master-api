@@ -7,11 +7,13 @@ import org.gepnic.doors.masterapi.model.SqlTemplate;
 import org.gepnic.doors.masterapi.model.User;
 import org.gepnic.doors.masterapi.repository.AgentRepository;
 import org.gepnic.doors.masterapi.repository.UserRepository;
+import org.gepnic.doors.masterapi.util.EncryptionUtils;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.jdbc.core.JdbcTemplate; // 🛡️ CRITICAL: Added this missing import
+import org.springframework.jdbc.core.JdbcTemplate; 
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate; 
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
@@ -28,6 +30,7 @@ public class AgentExecutionService {
     private final UserRepository userRepository;
     private final WebClient.Builder webClientBuilder;
     private final JdbcTemplate jdbcTemplate; 
+    private final RestTemplate restTemplate; 
 
     private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
         "(?i)(--|;|\\bUNION\\b|\\bSELECT\\b|\\bDROP\\b|\\bOR\\b\\s+\\d+=\\d+|\\bUPDATE\\b|\\bDELETE\\b)", 
@@ -48,68 +51,71 @@ public class AgentExecutionService {
                 .collect(Collectors.toList());
     }
 
-    // In AgentExecutionService.java
- public Map<String, Object> executeDryRun(String agentId, String base64Sql, Map<String, Object> params) {
-    String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+    public Map<String, Object> executeDryRun(String agentId, String base64Payload, Map<String, Object> params) {
+        // 1. Fetch target agent configuration row from your JPA repository registry
+        Agent agent = agentRepository.findById(agentId.trim())
+                .orElseThrow(() -> new NoSuchElementException("Agent record missing for ID: " + agentId));
 
-    // 🛡️ 1. NULL GUARD: Prevent the "src is null" crash
-    if (base64Sql == null || base64Sql.trim().isEmpty()) {
-        throw new IllegalArgumentException("SQL payload (base64Sql) is missing or null");
+        // 2. Normalize base url strings
+        String rawBaseUrl = agent.getBaseUrl() != null ? agent.getBaseUrl().trim() : "";
+        while (rawBaseUrl.endsWith("/")) {
+            rawBaseUrl = rawBaseUrl.substring(0, rawBaseUrl.length() - 1);
+        }
+
+        // 3. 🚀 THE ARCHITECTURE REFACTOR ROUTER
+        int lastSlashIndex = rawBaseUrl.lastIndexOf("/");
+        if (lastSlashIndex == -1 || lastSlashIndex < rawBaseUrl.indexOf("://") + 3) {
+            throw new IllegalArgumentException("Malformed base_url in registry for agent: " + agentId);
+        }
+
+        // e.g., "dev-02" or "assam"
+        String extractedInstanceCode = rawBaseUrl.substring(lastSlashIndex + 1); 
+        
+        // e.g., "http://127.0.0.1:8051" or "https://demoetenders.tn.nic.in/doorsagent"
+        String proxyNetworkRoot = rawBaseUrl.substring(0, lastSlashIndex); 
+
+        // 🎯 THE CRITICAL ALIGNMENT FIX: Target the raw, unslashed root endpoint configuration
+        String endpoint = proxyNetworkRoot + "/v1/agent/query/dry-run";
+
+        log.info("DOORS-GOVERNANCE: Running dry-run validation routing against endpoint -> {}", endpoint);
+
+        // 4. Build outbound payload envelope frame matching your Agent requirements
+        Map<String, Object> agentPayload = new HashMap<>();
+        
+        // Decode Base64 string safely before handoff to unpooled agent
+        String decodedSql = "";
+        if (base64Payload != null && !base64Payload.isBlank()) {
+            decodedSql = new String(Base64.getDecoder().decode(base64Payload.trim()));
+        }
+        agentPayload.put("sql", decodedSql);
+        agentPayload.put("params", params != null ? params : new HashMap<>());
+        agentPayload.put("instanceCode", extractedInstanceCode);
+
+        // Inject target database credentials dynamically from the matching repository record row
+        agentPayload.put("dbHost", agent.getTargetDbHost() != null ? agent.getTargetDbHost().trim() : "");
+        agentPayload.put("dbPort", agent.getTargetDbPort());
+        agentPayload.put("dbName", agent.getTargetDbName() != null ? agent.getTargetDbName().trim() : "");
+        agentPayload.put("dbUser", agent.getTargetDbUser() != null ? agent.getTargetDbUser().trim() : "");
+        
+        // 5. 🛡️ Dispatch payload inside the try-catch block to handle checked exceptions gracefully
+        try {
+            // 🚀 THE FIX: Checked exception source is now safely wrapped inside the error handler frame
+            if (agent.getTargetDbPassword() != null && !agent.getTargetDbPassword().isBlank()) {
+                String encryptedPass = EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(), "DOORS_VLAN_INTERNAL_SECRET_KEY_2026");
+                agentPayload.put("dbPasswordSecure", encryptedPass);
+            } else {
+                agentPayload.put("dbPasswordSecure", "");
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject(endpoint, agentPayload, Map.class);
+            return response != null ? response : new HashMap<>();
+        } catch (Exception ex) {
+            log.error("DOORS-GOVERNANCE: Proxy handoff failure or encryption fault on route [{}]: {}", endpoint, ex.getMessage());
+            throw new RuntimeException(ex.getMessage(), ex); // Transform checked exception to unmanaged RuntimeException
+        }
     }
 
-    // 🛡️ 2. Authorization Logic
-    String checkMapping = "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name ILIKE ? AND agent_id = ?";
-    Integer count = jdbcTemplate.queryForObject(checkMapping, Integer.class, currentUsername, agentId);
-    
-    if (count == null || count == 0) {
-        throw new SecurityException("Security Violation: Access Denied for agent " + agentId);
-    }
-
-    // 🛡️ 3. DECODE & SCRUB: Convert Base64 back to SQL and remove whitespace (Char 20 fix)
-    String decodedSql;
-    try {
-        // Use MimeDecoder to be lenient with spaces/newlines in production
-        byte[] decodedBytes = Base64.getMimeDecoder().decode(base64Sql.replaceAll("\\s", ""));
-        decodedSql = new String(decodedBytes);
-    } catch (Exception e) {
-        log.error("DOORS-MASTER: Base64 Decoding failed for agent {}", agentId);
-        throw new IllegalArgumentException("Invalid Base64 encoding in SQL payload");
-    }
-
-    // 4. Resolve Agent URL
-    Agent agent = agentRepository.findById(agentId)
-            .orElseThrow(() -> new RuntimeException("Agent not found: " + agentId));
-
-    String targetUrl = agent.getBaseUrl() + "/doorsagent/v1/agent/query/execute";
-    
-    // 5. Prepare Payload (Sending the DECODED SQL to the agent)
-    Map<String, Object> requestPayload = new HashMap<>();
-    requestPayload.put("sql", decodedSql);
-    requestPayload.put("executedBy", currentUsername); 
-    requestPayload.put("params", params != null ? params : new HashMap<>());
-
-    // 6. Execute with 10-minute timeout for heavy NIC reports
-    log.info("DOORS-MASTER: Dispatching Dry-Run to {}...", agent.getDisplayName());
-    
-    List<Map<String, Object>> resultData = webClientBuilder.build()
-        .post()
-        .uri(targetUrl)
-        .bodyValue(requestPayload)
-        .retrieve()
-        .bodyToFlux(new ParameterizedTypeReference<Map<String, Object>>() {})
-        .timeout(Duration.ofMinutes(30)) 
-        .collectList()
-        .block(); 
-
-    Map<String, Object> responseMap = new HashMap<>();
-    responseMap.put("success", true);
-    responseMap.put("data", resultData); 
-    responseMap.put("node", agentId);
-    
-    return responseMap;
-}
-
-  
     private void validateParams(Map<String, Object> params) {
         if (params == null) return;
         for (Object value : params.values()) {

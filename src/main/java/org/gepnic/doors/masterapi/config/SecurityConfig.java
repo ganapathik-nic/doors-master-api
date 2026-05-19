@@ -38,7 +38,8 @@ public class SecurityConfig {
             "http://localhost:*", 
             "http://127.0.0.1:*",
             "http://demoetenders.tn.nic.in:*",
-            "https://demoetenders.tn.nic.in"
+            "https://demoetenders.tn.nic.in",
+            "https://tntenders.gov.in"
         )); 
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-API-KEY", "Accept", "Origin"));

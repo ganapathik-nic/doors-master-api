@@ -40,9 +40,9 @@ public class InfrastructureController {
     @GetMapping("/agents/list")
     public ResponseEntity<ApiResponse<List<Agent>>> getActiveAgents() {
         List<Agent> activeAgents = agentRepository.findByIsActiveTrue();
-        
         return ResponseEntity.ok(ApiResponse.success(activeAgents, "Active nodes retrieved"));
     }
+
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<Agent>> registerAgent(@RequestBody Agent agent) {
         agent.setIsActive(true);
@@ -53,68 +53,58 @@ public class InfrastructureController {
         if (agent.getCreatedBy() == null) agent.setCreatedBy("GANAPATHI");
         if (agent.getUpdatedBy() == null) agent.setUpdatedBy("GANAPATHI");
 
+        // Explicit structural model default protection
+        if (agent.getAgentType() == null) agent.setAgentType("INDIVIDUAL");
+
         Agent savedAgent = agentRepository.save(agent);
-        log.info("DOORS-MASTER: Registered new campus agent: {}", savedAgent.getAgentId());
+        log.info("DOORS-MASTER: Registered new hybrid agent [{}], Model Architecture Type: {}", 
+                savedAgent.getAgentId(), savedAgent.getAgentType());
         return ResponseEntity.ok(ApiResponse.success(savedAgent, "Agent registered successfully"));
     }
-    @PutMapping("/update/{agentId}")
-public ResponseEntity<ApiResponse<Agent>> updateAgent(
-        @PathVariable String agentId, 
-        @RequestBody Agent agentDetails,
-        java.security.Principal principal) { // Inject Principal to get logged-in user
-    
-    // Resolve identity dynamically
-    String currentUsername = (principal != null) ? principal.getName() : "SYSTEM";
-    
-    log.info("DOORS-MASTER: Configuration update for agent [{}] by user [{}]", agentId, currentUsername);
-    
-    return agentRepository.findById(agentId).map(existingAgent -> {
-        // 1. Map Infrastructure Details
-        existingAgent.setDisplayName(agentDetails.getDisplayName());
-        existingAgent.setBaseUrl(agentDetails.getBaseUrl());
-        existingAgent.setAgentInstanceCode(agentDetails.getAgentInstanceCode());
-        
-        // 2. Map Sandbox Flag (The missing field fix)
-        existingAgent.setIsSandbox(agentDetails.getIsSandbox());
-        
-        // 3. Dynamic Auditing
-        existingAgent.setUpdatedAt(LocalDateTime.now());
-        existingAgent.setUpdatedBy(currentUsername); 
 
-        // 4. Persistence
-        Agent updated = agentRepository.save(existingAgent);
-        
-        log.info("DOORS-MASTER: Successfully updated agent [{}]", agentId);
-        return ResponseEntity.ok(ApiResponse.success(updated, "Agent configuration updated successfully"));
-        
-    }).orElseGet(() -> {
-        log.warn("DOORS-MASTER: Update failed. Agent [{}] not found", agentId);
-        return ResponseEntity.status(404)
-            .body(ApiResponse.error("Agent not found with ID: " + agentId, 404));
-    });
-}
-    /* 
-@PutMapping("/update/{agentId}")
+    @PutMapping("/update/{agentId}")
     public ResponseEntity<ApiResponse<Agent>> updateAgent(
             @PathVariable String agentId, 
-            @RequestBody Agent agentDetails) {
+            @RequestBody Agent agentDetails,
+            java.security.Principal principal) {
         
-        log.info("DOORS-MASTER: Updating configuration for agent: {}", agentId);
+        // Resolve identity dynamically from security context session
+        String currentUsername = (principal != null) ? principal.getName() : "SYSTEM";
+        
+        log.info("DOORS-MASTER: Configuration update for agent [{}] by user [{}]", agentId, currentUsername);
         
         return agentRepository.findById(agentId).map(existingAgent -> {
+            // 1. Map Core Infrastructure Details
             existingAgent.setDisplayName(agentDetails.getDisplayName());
             existingAgent.setBaseUrl(agentDetails.getBaseUrl());
             existingAgent.setAgentInstanceCode(agentDetails.getAgentInstanceCode());
+            existingAgent.setIsSandbox(agentDetails.getIsSandbox());
             
+            // 2. Map New Hybrid Model Properties explicitly
+            existingAgent.setAgentType(agentDetails.getAgentType() != null ? agentDetails.getAgentType() : "INDIVIDUAL");
+            existingAgent.setTargetDbHost(agentDetails.getTargetDbHost());
+            existingAgent.setTargetDbPort(agentDetails.getTargetDbPort());
+            existingAgent.setTargetDbName(agentDetails.getTargetDbName());
+            existingAgent.setTargetDbUser(agentDetails.getTargetDbUser());
+            existingAgent.setTargetDbPassword(agentDetails.getTargetDbPassword());
+            
+            // 3. Dynamic Auditing
             existingAgent.setUpdatedAt(LocalDateTime.now());
-            existingAgent.setUpdatedBy("GANAPATHI"); // Or get from SecurityContext
+            existingAgent.setUpdatedBy(currentUsername); 
 
+            // 4. Persistence Execution
             Agent updated = agentRepository.save(existingAgent);
-            return ResponseEntity.ok(ApiResponse.success(updated, "Agent configuration updated"));
-        }).orElseGet(() -> ResponseEntity.status(404)
-            .body(ApiResponse.error("Agent not found with ID: " + agentId, 404)));
+            
+            log.info("DOORS-MASTER: Successfully updated configuration fields for hybrid agent [{}]", agentId);
+            return ResponseEntity.ok(ApiResponse.success(updated, "Agent configuration updated successfully"));
+            
+        }).orElseGet(() -> {
+            log.warn("DOORS-MASTER: Update failed. Agent [{}] not found", agentId);
+            return ResponseEntity.status(404)
+                .body(ApiResponse.error("Agent not found with ID: " + agentId, 404));
+        });
     }
-    */
+
     @PutMapping("/deactivate/{agentId}")
     public ResponseEntity<ApiResponse<String>> deactivate(@PathVariable String agentId) {
         Agent agent = agentRepository.findById(agentId).orElseThrow();
@@ -135,113 +125,96 @@ public ResponseEntity<ApiResponse<Agent>> updateAgent(
         return ResponseEntity.ok(ApiResponse.success(null, "Restored"));
     }
 
-    /**
-     * Endpoint to support Sidebar Status Badges.
-     * Checks the sql_templates table for pending requests.
-     */
     @GetMapping("/templates/count")
     public ResponseEntity<ApiResponse<Long>> getPendingCount(@RequestParam String status) {
         long count = sqlTemplateRepository.countByStatus(status); 
         log.info("DOORS-MASTER: Pending templates count requested: {}", count);
         return ResponseEntity.ok(ApiResponse.success(count, "Count retrieved"));
     }
-@GetMapping("/ping")
-public ResponseEntity<ApiResponse<Map<String, Object>>> pingAgent(@RequestParam("url") String targetUrl) {
-    // We now take the 'url' from the query parameter sent by infrastructure.vue
-    log.info("DOORS-MASTER: Executing Application Health Check for: {}", targetUrl);
-
-    try {
-        // 1. Target the new status endpoint on the agent side
-        String healthCheckEndpoint = targetUrl.endsWith("/") ? targetUrl + "status" : targetUrl + "/status";
-
-        // 2. Execute the check with a 5-second timeout
-        Map<String, Object> agentResponse = webClientBuilder.build()
-                .get()
-                .uri(healthCheckEndpoint)
-                .retrieve()
-                .onStatus(HttpStatusCode::isError, response -> Mono.error(new RuntimeException("Agent app returned error status")))
-                .bodyToMono(Map.class) // We capture the JSON body (app status, db status, etc.)
-                .timeout(java.time.Duration.ofSeconds(5)) 
-                .block();
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("online", true);
-        data.put("details", agentResponse); // Pass through the agent's internal health details
+  @GetMapping("/ping")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> pingAgent(
+            @RequestParam(value = "url", required = false) String targetUrl) {
         
-        return ResponseEntity.ok(ApiResponse.success(data, "ONLINE"));
+        if (targetUrl == null || targetUrl.isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Query parameter 'url' is required", 400));
+        }
 
-    } catch (Exception e) {
-        log.error("DOORS-MASTER: Health Check Failed for {}: {}", targetUrl, e.getMessage());
-        
-        Map<String, Object> data = new HashMap<>();
-        data.put("online", false);
-        data.put("error", e.getMessage());
-        
-        return ResponseEntity.ok(ApiResponse.success(data, "OFFLINE"));
+        log.info("DOORS-MASTER: Parsing targeted infrastructure health routing path for: {}", targetUrl);
+
+        try {
+            // Normalize layout boundaries by removing terminal slashes
+            String normalized = targetUrl.trim();
+            while (normalized.endsWith("/")) {
+                normalized = normalized.substring(0, normalized.length() - 1);
+            }
+
+            int protocolHeaderIndex = normalized.contains("://") ? normalized.indexOf("://") + 3 : 0;
+            int firstPathSlashIndex = normalized.indexOf("/", protocolHeaderIndex);
+            
+            String healthCheckEndpoint;
+
+            // 🚀 STRATEGY ROUTER EVALUATION
+            if (normalized.contains("/doorsagent")) {
+                // RULE 1: Production Reverse-Proxy Context Route
+                // e.g., "https://demoetenders.tn.nic.in/doorsagent/staging-2" -> "https://demoetenders.tn.nic.in/doorsagent/"
+                int doorsAgentIndex = normalized.indexOf("/doorsagent");
+                healthCheckEndpoint = normalized.substring(0, doorsAgentIndex + "/doorsagent".length()) + "/";
+            } else if (firstPathSlashIndex != -1) {
+                // RULE 2: Local Standalone Development Origin
+                // e.g., "http://127.0.0.1:8051/dev-01" -> "http://127.0.0.1:8051/"
+                healthCheckEndpoint = normalized.substring(0, firstPathSlashIndex) + "/";
+            } else {
+                // Flat Host Fallback
+                healthCheckEndpoint = normalized + "/";
+            }
+
+            log.info("DOORS-MASTER: Executing network probe. Targeted Ping Endpoint: {}", healthCheckEndpoint);
+
+            // 🛡️ REDIRECT-AWARE EXPLICIT VITALITY CHECK
+            // We strip followRedirect capabilities to isolate 302 masquerading anomalies
+            Integer statusCode = webClientBuilder
+                    .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
+                            reactor.netty.http.client.HttpClient.create().followRedirect(false)
+                    ))
+                    .build()
+                    .get()
+                    .uri(healthCheckEndpoint)
+                    .exchangeToMono(response -> Mono.just(response.statusCode().value()))
+                    .timeout(java.time.Duration.ofSeconds(4))
+                    .block();
+
+            log.info("DOORS-MASTER: Gateway Probe Response Code collected: {}", statusCode);
+
+            // ⚡ DECISION ENGINE:
+            // A node is healthy only if it responds directly without a 302 gateway detour, 
+            // and doesn't drop a 5xx error (502 Bad Gateway/504 Timeout) indicating a stopped backend process.
+            boolean isAlive = (statusCode != null && statusCode != 302 && statusCode < 500);
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("online", isAlive);
+            
+            Map<String, Object> details = new HashMap<>();
+            details.put("httpStatusCode", statusCode);
+            details.put("evaluatedPingPath", healthCheckEndpoint);
+            data.put("details", details);
+            
+            String operationalStatus = isAlive ? "ONLINE" : "OFFLINE";
+            return ResponseEntity.ok(ApiResponse.success(data, operationalStatus));
+
+        } catch (Exception e) {
+            log.error("DOORS-MASTER: Ping connection failed for [{}]. Error Context: {}", targetUrl, e.getMessage());
+            
+            Map<String, Object> data = new HashMap<>();
+            data.put("online", false);
+            
+            Map<String, Object> details = new HashMap<>();
+            details.put("httpStatusCode", 0);
+            details.put("evaluatedPingPath", targetUrl);
+            details.put("exceptionMessage", e.getMessage());
+            data.put("details", details);
+            
+            return ResponseEntity.ok(ApiResponse.success(data, "OFFLINE"));
+        }
     }
-}
-/*  
-@GetMapping("/ping/{agentId}")
-public ResponseEntity<ApiResponse<Map<String, Object>>> pingAgent(@PathVariable String agentId) {
-    Agent agent = agentRepository.findById(agentId)
-            .orElseThrow(() -> new RuntimeException("Agent not found"));
 
-    String targetUrl = agent.getBaseUrl();
-    log.info("DOORS-MASTER: Pinging Agent {} at {}", agentId, targetUrl);
-
-    try {
-        // block() converts the reactive call to a normal synchronous response
-        // This ensures the SecurityContext (ADMIN role) stays attached to the thread
-        webClientBuilder.build()
-                .get()
-                .uri(targetUrl + "/api/v1/agent/test?sql=SELECT 1")
-                .retrieve()
-                .onStatus(HttpStatusCode::isError, response -> Mono.empty()) 
-                .toBodilessEntity()
-                .block(); // Wait for result synchronously
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("online", true);
-        return ResponseEntity.ok(ApiResponse.success(data, "ONLINE"));
-
-    } catch (Exception e) {
-        log.error("DOORS-MASTER: Ping failed for {}: {}", agentId, e.getMessage());
-        Map<String, Object> data = new HashMap<>();
-        data.put("online", false);
-        return ResponseEntity.ok(ApiResponse.success(data, "OFFLINE"));
-    }
-}
-*/
-/* 
-    @GetMapping("/ping/{agentId}")
-    public Mono<ApiResponse<Map<String, Object>>> pingAgent(@PathVariable String agentId) {
-        Agent agent = agentRepository.findById(agentId)
-                .orElseThrow(() -> new RuntimeException("Agent not found"));
-
-        String targetUrl = agent.getBaseUrl();
-        log.info("DOORS-MASTER: Pinging Agent {} at {}", agentId, targetUrl);
-
-        return webClientBuilder.build()
-                .get()
-                .uri(targetUrl + "/api/v1/agent/test?sql=SELECT 1")
-                .retrieve()
-                // Suppress errors to ensure "Online" status if any response is received
-                .onStatus(HttpStatusCode::isError, response -> Mono.empty()) 
-                .toBodilessEntity()
-                .map(response -> {
-                    Map<String, Object> data = new HashMap<>();
-                    data.put("online", true);
-                    return ApiResponse.success(data, "ONLINE");
-                })
-                .onErrorResume(e -> {
-                    log.error("DOORS-MASTER: Ping failed for {}: {}", agentId, e.getMessage());
-                    Map<String, Object> data = new HashMap<>();
-                    data.put("online", false);
-                    return Mono.just(ApiResponse.success(data, "OFFLINE"));
-                });
-    }
-*/
-    private boolean isPrivate(String url) {
-        return url.contains("10.") || url.contains("172.16.") || url.contains("192.168.");
-    }
 }

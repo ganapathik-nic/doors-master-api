@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Agent {
+
     @Id
     @Column(name = "agent_id")
     private String agentId;
@@ -28,6 +29,26 @@ public class Agent {
 
     @Column(name = "agent_instance_code")
     private String agentInstanceCode;
+
+    // --- New Hybrid Model Specifications ---
+    @Builder.Default  // Fixed: Guarantees builder instances preserve default assignment state
+    @Column(name = "agent_type", nullable = false)
+    private String agentType = "INDIVIDUAL"; // 'CENTRAL' or 'INDIVIDUAL'
+
+    @Column(name = "target_db_host")
+    private String targetDbHost;
+
+    @Column(name = "target_db_port")
+    private Integer targetDbPort;
+
+    @Column(name = "target_db_name")
+    private String targetDbName;
+
+    @Column(name = "target_db_user")
+    private String targetDbUser;
+
+    @Column(name = "target_db_password")
+    private String targetDbPassword;
 
     @Builder.Default
     @Column(name = "is_active")
@@ -51,6 +72,7 @@ public class Agent {
     private String updatedBy;
 
     @Builder.Default
+    @Column(name = "status")
     private String status = "ACTIVE";
 
     @PrePersist
@@ -58,8 +80,11 @@ public class Agent {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
         normalizeBaseUrl();
+        
+        // Null protection checks for database column constraints
+        if (this.agentType == null) this.agentType = "INDIVIDUAL"; 
         if (this.isActive == null) this.isActive = true;
-        if (this.isSandbox == null) this.isSandbox = false; // Ensure no NULLs
+        if (this.isSandbox == null) this.isSandbox = false; 
         if (this.createdBy == null) this.createdBy = "SYSTEM";
         if (this.updatedBy == null) this.updatedBy = "SYSTEM"; 
     }

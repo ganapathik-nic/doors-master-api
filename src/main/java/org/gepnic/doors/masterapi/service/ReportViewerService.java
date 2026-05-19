@@ -8,7 +8,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.config.AuditContextHolder;
 import org.gepnic.doors.masterapi.dto.ReportExecutionRequest;
 import org.gepnic.doors.masterapi.dto.SelectionOption;
+import org.gepnic.doors.masterapi.dto.ReportResult;
+import org.gepnic.doors.masterapi.model.Agent; 
+import org.gepnic.doors.masterapi.repository.AgentRepository; 
 import org.gepnic.doors.masterapi.repository.ReportMappingRepository;
+import org.gepnic.doors.masterapi.util.EncryptionUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -21,26 +25,27 @@ import java.sql.Array;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import org.gepnic.doors.masterapi.dto.ReportResult;
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class ReportViewerService {
 
     private static final String ATTR_TOTAL_RECORD_COUNT = "TOTAL_RECORD_COUNT";
-
+    private static final String INFRA_TRANSIT_SECRET = "DOORS_VLAN_INTERNAL_SECRET_KEY_2026";
+    
     private final ObjectMapper objectMapper;
     private final ReportMappingRepository mappingRepository;
+    private final AgentRepository agentRepository; 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
 
     // 🛡️ SQL Injection Pattern for Text-based Scanning
- 
-// 🛡️ This version catches OR'1'='1' (no spaces)
-private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
-    "(?i)(--|;|\\bUNION\\b|\\bSELECT\\b|\\bDROP\\b|\\bUPDATE\\b|\\bDELETE\\b|\\bOR\\b[\\s'\"\\d]*=[\\s'\"\\d]*)", 
-    Pattern.CASE_INSENSITIVE
-);
+    private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
+        "(?i)(--|;|\\bUNION\\b|\\bSELECT\\b|\\bDROP\\b|\\bUPDATE\\b|\\bDELETE\\b|\\bOR\\b[\\s'\"\\d]*=[\\s'\"\\d]*)", 
+        Pattern.CASE_INSENSITIVE
+    );
+
     @Transactional(readOnly = true)
     public List<SelectionOption> getQueriesForUser(String username) {
         List<Object[]> results = mappingRepository.findTemplatesByAgentIntersection(username);
@@ -72,7 +77,7 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
                 )).collect(Collectors.toList());
     }
 
-     public ReportResult executeReport(ReportExecutionRequest request) {
+    public ReportResult executeReport(ReportExecutionRequest request) {
         List<Map<String, Object>> aggregatedResults = new ArrayList<>();
         List<String> offlineAgents = new ArrayList<>();
         int actualAuditCount = 0;
@@ -90,15 +95,69 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
             for (String agentId : targetAgentIds) {
                 String agentIdTrimmed = agentId.trim();
                 try {
-                    String agentUrl = fetchAgentUrl(agentIdTrimmed);
-                    String endpoint = buildEndpoint(agentUrl);
+                    // Fetch the exact unique entity object from the master registry by UI ID selection
+                    Agent agent = agentRepository.findById(agentIdTrimmed)
+                            .orElseThrow(() -> new NoSuchElementException("Agent registry record missing for ID: " + agentIdTrimmed));
 
+                    String rawBaseUrl = agent.getBaseUrl() != null ? agent.getBaseUrl().trim() : "";
+                    while (rawBaseUrl.endsWith("/")) {
+                        rawBaseUrl = rawBaseUrl.substring(0, rawBaseUrl.length() - 1);
+                    }
+
+                    // 🚀 THE ARCHITECTURE REFACTOR ROUTER
+                    int lastSlashIndex = rawBaseUrl.lastIndexOf("/");
+                    if (lastSlashIndex == -1 || lastSlashIndex < rawBaseUrl.indexOf("://") + 3) {
+                        throw new IllegalArgumentException("Malformed base_url in registry for agent: " + agentIdTrimmed);
+                    }
+
+                    // e.g., "assam" or "dev-01"
+                    String extractedInstanceCode = rawBaseUrl.substring(lastSlashIndex + 1); 
+                    
+                    // e.g., "https://demoetenders.tn.nic.in/doorsagent" or "http://127.0.0.1:8051"
+                    String proxyNetworkRoot = rawBaseUrl.substring(0, lastSlashIndex); 
+                    
+                    // 🎯 Dynamically append the exact endpoint path to the clean proxy root context
+                    String endpoint = proxyNetworkRoot + "/v1/agent/query/execute";
+
+                    // Declare loop-isolated connection parameters explicitly
+                    String targetHost = agent.getTargetDbHost() != null ? agent.getTargetDbHost().trim() : "";
+                    String targetDb   = agent.getTargetDbName() != null ? agent.getTargetDbName().trim() : "";
+                    String targetUser = agent.getTargetDbUser() != null ? agent.getTargetDbUser().trim() : "";
+                    int targetPort    = agent.getTargetDbPort() != null ? agent.getTargetDbPort() : 5432;
+
+                    // 🎯 EXPLICIT CONSOLE OUT LOUDSPEAKER
+                    log.info("=================================================================================");
+                    log.info("DOORS-MASTER CONSOLE TRACKER:");
+                    log.info("  -> Target Agent ID  : [{}]", agentIdTrimmed);
+                    log.info("  -> Isolated Suffix  : [{}]", extractedInstanceCode);
+                    log.info("  -> Mapped Proxy Root: [{}]", proxyNetworkRoot);
+                    log.info("  -> TARGET ENDPOINT  : [{}]", endpoint);
+                    log.info("  -> WIRE PARAMETERS  : Host=[{}], Port=[{}], DB=[{}], User=[{}]", 
+                            targetHost, targetPort, targetDb, targetUser);
+                    log.info("=================================================================================");
+
+                    // Build the payload injection frame
                     Map<String, Object> payload = new HashMap<>();
                     payload.put("sql", sql);
                     payload.put("executedBy", request.getPerformedBy());
                     payload.put("params", sanitizedParams);
+                    payload.put("agentType", agent.getAgentType());
+                    payload.put("instanceCode", extractedInstanceCode); 
 
-                    // 🛡️ Execute Remote Call
+                    // Inject validated database fields directly into the outbound envelope
+                    payload.put("dbHost", targetHost);
+                    payload.put("dbPort", targetPort);
+                    payload.put("dbName", targetDb);
+                    payload.put("dbUser", targetUser);
+                    
+                    if (agent.getTargetDbPassword() != null && !agent.getTargetDbPassword().isBlank()) {
+                        String encryptedPass = EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(), INFRA_TRANSIT_SECRET);
+                        payload.put("dbPasswordSecure", encryptedPass);
+                    } else {
+                        payload.put("dbPasswordSecure", "");
+                    }
+
+                    // 🛡️ Deliver payload to the dynamically derived proxy endpoint
                     ResponseEntity<String> response = restTemplate.postForEntity(endpoint, payload, String.class);
                     String rawBody = response.getBody();
 
@@ -123,15 +182,11 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
                         actualAuditCount += rows.size();
                     }
                 } catch (Exception nodeEx) {
-                    // 🚀 THE CHANGE: Capture the offline agent instead of just logging it
-                    log.error("DOORS-MASTER: Node [{}] is Offline or Error: {}", agentIdTrimmed, nodeEx.getMessage());
+                    log.error("DOORS-MASTER: Node [{}] execution pipe failure: {}", agentIdTrimmed, nodeEx.getMessage(), nodeEx);
                     offlineAgents.add(agentIdTrimmed);
                 }
             }
-
             setRecordCountForAudit(actualAuditCount);
-            
-            // Return both the data and the list of failed nodes
             return new ReportResult(aggregatedResults, offlineAgents);
 
         } catch (SecurityException se) {
@@ -141,6 +196,7 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
             throw e;
         }
     }
+
     /**
      * 🛡️ Scans text parameters for malicious SQL patterns to trigger 403 Forbidden.
      */
@@ -194,10 +250,6 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
         return requestedList;
     }
 
-    private String fetchAgentUrl(String agentId) {
-        return jdbcTemplate.queryForObject("SELECT base_url FROM agents WHERE agent_id = ?", String.class, agentId);
-    }
-
     private String resolveSql(ReportExecutionRequest request) {
         String sql = (request.getQueryId() != null)
                 ? mappingRepository.findSqlByQueryId(request.getQueryId())
@@ -208,7 +260,7 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
 
     private String buildEndpoint(String agentUrl) {
         String normalized = (agentUrl != null && agentUrl.endsWith("/")) ? agentUrl.substring(0, agentUrl.length() - 1) : agentUrl;
-        return normalized + "/doorsagent/v1/agent/query/execute";
+        return normalized + "/v1/agent/query/execute";
     }
 
     // --- Helper Methods (JSON Parsing & Audit) ---
@@ -309,7 +361,7 @@ private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
             if (value == null) { sanitized.put(key, null); return; }
             String text = value.toString().trim();
             if (text.matches("^\\d+$")) {
-                try { sanitized.put(key, Long.parseLong(text)); } catch (Exception e) { sanitized.put(key, value); }
+                 try { sanitized.put(key, Long.parseLong(text)); } catch (Exception e) { sanitized.put(key, value); }
             } else { sanitized.put(key, value); }
         });
         return sanitized;

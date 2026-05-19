@@ -1,5 +1,6 @@
 server:
   port: 8052
+ 
   max-http-header-size: 64KB # Handle large metadata/column counts
   tomcat:
     connection-timeout: 600000 # 10 minutes (matches your Apache ProxyTimeout)

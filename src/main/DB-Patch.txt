@@ -1,0 +1,13 @@
+ALTER TABLE public.agents 
+ADD COLUMN agent_type CHARACTER VARYING(50) NOT NULL DEFAULT 'INDIVIDUAL',
+ADD COLUMN target_db_host CHARACTER VARYING(255) DEFAULT NULL,
+ADD COLUMN target_db_port INTEGER DEFAULT NULL,
+ADD COLUMN target_db_name CHARACTER VARYING(255) DEFAULT NULL,
+ADD COLUMN target_db_user CHARACTER VARYING(255) DEFAULT NULL,
+ADD COLUMN target_db_password TEXT DEFAULT NULL;
+
+-- Add check constraint to ensure valid types
+ALTER TABLE public.agents 
+ADD CONSTRAINT chk_agent_type CHECK (agent_type IN ('CENTRAL', 'INDIVIDUAL'));
+
+COMMENT ON COLUMN public.agents.agent_type IS 'Differentiates between CENTRAL (VLAN shared) and INDIVIDUAL (Cloud specific) agents.';

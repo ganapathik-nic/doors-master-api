@@ -39,6 +39,11 @@ spring:
 # Portal Registry
 doors:
   security:
+    allowed-origins:
+      - "http://localhost:*"
+      - "http://127.0.0.1:*"
+      - "http://demoetenders.tn.nic.in:*"
+      - "https://demoetenders.tn.nic.in"
     rate-limit:
       # Policy for Human Interactive Users (UI)
       ui:
@@ -53,6 +58,9 @@ doors:
     # Define which paths are considered "Gateway"
     # This keeps your Filter code clean
     gateway-path-pattern: "/v1/master/gateway/orchestrate/"     
+crypto:
+  keys-directory: ./security/keys/
+  
 app:
   portals:
     - id: "PORTAL_01"

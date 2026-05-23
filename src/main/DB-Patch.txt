@@ -11,3 +11,19 @@ ALTER TABLE public.agents
 ADD CONSTRAINT chk_agent_type CHECK (agent_type IN ('CENTRAL', 'INDIVIDUAL'));
 
 COMMENT ON COLUMN public.agents.agent_type IS 'Differentiates between CENTRAL (VLAN shared) and INDIVIDUAL (Cloud specific) agents.';
+
+CREATE TABLE doors_signing_certificates (
+    id SERIAL PRIMARY KEY,
+    key_id VARCHAR(50) NOT NULL UNIQUE,       -- e.g., "doors-pki-v1", "doors-pki-v2"
+    display_name VARCHAR(100) NOT NULL,       -- e.g., "Initial Core Certificate Set"
+    is_active BOOLEAN DEFAULT false,          -- Flags which key pair is actively signing responses
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    activated_at TIMESTAMP,
+    expiry_at TIMESTAMP
+);
+
+INSERT INTO doors_signing_certificates (key_id, display_name, is_active) 
+VALUES ('doors-pki-v1', 'Initial Core Bootstrap Keys', true);
+
+-- Result should show key_id: 'doors-pki-v1'
+SELECT key_id FROM doors_signing_certificates WHERE is_active = true;

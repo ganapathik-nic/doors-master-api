@@ -17,6 +17,14 @@ public interface ApiClientRepository extends JpaRepository<ApiClient, Long> {
     boolean existsByApiKeyAndIsActiveTrue(String apiKey);
 
     /**
+     * 🚀 THE FIXED COMPLIANCE BRIDGE:
+     * Added explicitly to resolve the compilation error on line 51 of ExternalGatewayController.
+     * Uses @Query to point directly to the underlying 'isActive' property regardless of method naming.
+     */
+    @Query("SELECT COUNT(c) > 0 FROM ApiClient c WHERE c.apiKey = :apiKey AND c.isActive = true")
+    boolean existsByApiKeyAndActiveTrue(@Param("apiKey") String apiKey);
+
+    /**
      * 🚀 HIGH-PERFORMANCE OPTIMIZATION:
      * Directly check if encryption is enabled for an active client key without loading 
      * the entire ApiClient entity into the Hibernate persistence context.

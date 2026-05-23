@@ -3,12 +3,13 @@ package org.gepnic.doors.masterapi.config;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.gepnic.doors.masterapi.repository.ApiClientRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import java.util.List;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -31,27 +32,25 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final ApiClientRepository apiClientRepository;
 
+    @Value("${doors.security.allowed-origins:http://localhost:5173}")
+    private List<String> configuredAllowedOrigins;
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(Arrays.asList(
-            "http://localhost:*", 
-            "http://127.0.0.1:*",
-            "http://demoetenders.tn.nic.in:*",
-            "https://demoetenders.tn.nic.in",
-            "https://tntenders.gov.in"
-        )); 
+        
+        // 🚀 HOT-SWAP ATTACHMENT: No more hardcoded strings!
+        configuration.setAllowedOriginPatterns(configuredAllowedOrigins); 
+        
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-API-KEY", "Accept", "Origin"));
         configuration.setAllowCredentials(true);
-        configuration.setExposedHeaders(Arrays.asList("X-API-KEY", "Authorization"));
-        configuration.addExposedHeader("X-Session-Status");
-        configuration.setExposedHeaders(Arrays.asList("X-Session-Status", "Authorization"));
+        configuration.setExposedHeaders(Arrays.asList("X-API-KEY", "Authorization", "X-Session-Status"));
+        
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
-    }
-
+    }    
     @Bean 
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -70,13 +69,21 @@ public class SecurityConfig {
                 })
             )
             .authorizeHttpRequests(auth -> auth
-                // 2. PUBLIC & OPTIONS
+                // 2. PUBLIC & OPTIONS Whitelists
+                .requestMatchers("/api/v1/master/gateway/.well-known/jwks.json").permitAll()
                 .requestMatchers("/auth/bootstrap-hash").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/v1/auth/**", "/error","/api/auth/captcha").permitAll() 
+                .requestMatchers("/api/v1/auth/**", "/error", "/api/auth/captcha").permitAll() 
                 .requestMatchers("/api/v1/master/aira/**").permitAll()
                 .requestMatchers("/api/v1/master/reports/orchestrate/**").permitAll()
                 .requestMatchers("/api/v1/master/gateway/orchestrate/**").permitAll()
+
+                // ====================================================================
+                // 🚀 FIXED PKI SECURITY MATCHERS RAILS: Unified with your normalized authorities array
+                // ====================================================================
+                .requestMatchers("/api/v1/master/governance/signing-keys/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
 
                 // 3. GOVERNANCE
                 .requestMatchers("/api/v1/governance/**").hasAnyAuthority(
@@ -85,8 +92,7 @@ public class SecurityConfig {
                     "DEVELOPER", "ROLE_DEVELOPER", "ROLE_EXTERNAL", "External"
                 )
 
-                // 4. EXTERNAL DATA PULL (Hardened for DataManager)
-                // We add every possible case variation to match the JWT normalization
+                // 4. EXTERNAL DATA PULL
                 .requestMatchers("/api/v1/external/data-pull/**").hasAnyAuthority(
                     "External", "ROLE_EXTERNAL", 
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", 
@@ -108,7 +114,6 @@ public class SecurityConfig {
             // 8. API KEY FILTER (Secondary Auth)
             .addFilterAfter((request, response, chain) -> {
                 HttpServletRequest httpRequest = (HttpServletRequest) request;
-                // Only run API Key filter if no one is authenticated yet
                 if (SecurityContextHolder.getContext().getAuthentication() == null) {
                     if (!"OPTIONS".equalsIgnoreCase(httpRequest.getMethod()) && !httpRequest.getRequestURI().contains("/auth/login")) {
                         apiKeyFilter(httpRequest);

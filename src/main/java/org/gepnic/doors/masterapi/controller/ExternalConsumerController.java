@@ -22,7 +22,6 @@ import java.util.Map;       // Required for Map
 @RequestMapping("/api/v1/external")
 @RequiredArgsConstructor
 //@CrossOrigin(origins = "*", allowedHeaders = {"X-API-KEY", "Content-Type", "Authorization"})
-@CrossOrigin(origins = "*", allowedHeaders = "*")
 public class ExternalConsumerController {
 
     private final ClientQueryMapRepository mappingRepository;

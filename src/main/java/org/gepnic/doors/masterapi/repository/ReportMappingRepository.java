@@ -19,7 +19,9 @@ public interface ReportMappingRepository extends JpaRepository<SqlTemplate, Long
                    "FROM sql_templates t " +
                    "JOIN sql_template_authorized_agents staa ON t.query_id = staa.query_id " +
                    "JOIN user_authorized_agents uaa ON staa.agent_id = uaa.agent_id " +
-                   "WHERE uaa.user_name = :username AND t.is_active = true", 
+                   "WHERE LOWER(TRIM(uaa.user_name)) = LOWER(TRIM(:username)) " +
+                   "AND t.is_active = true " +
+                   "AND UPPER(t.status) = 'APPROVED'", 
            nativeQuery = true)
     List<Object[]> findTemplatesByAgentIntersection(@Param("username") String username);
 

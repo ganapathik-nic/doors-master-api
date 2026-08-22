@@ -13,6 +13,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j; 
+import java.security.Principal;
 
 @Slf4j
 @RestController
@@ -27,16 +28,17 @@ public class DataPullController {
             @RequestParam("requestTitle") String requestTitle,
             @RequestParam("targetAgentId") String targetAgentId,
             @RequestParam("justification") String justification,
-            @RequestParam("requestedBy") String requestedBy,
+            @RequestParam(value = "requestedBy", required = false) String ignoredRequestedBy,
             @RequestParam(value = "sampleJson", required = false) String sampleJson,
-            @RequestPart(value = "file", required = false) MultipartFile file) { 
+            @RequestPart(value = "file", required = false) MultipartFile file,
+            Principal principal) {
         
         try {
             DataPullRequestDTO dto = new DataPullRequestDTO();
             dto.setRequestTitle(requestTitle);
             dto.setTargetAgentId(targetAgentId);
             dto.setJustification(justification);
-            dto.setRequestedBy(requestedBy);
+            dto.setRequestedBy(principal.getName());
             dto.setSampleJson(sampleJson);
 
             DataPullRequest savedRequest = service.submitRequest(dto, file);
@@ -48,9 +50,11 @@ public class DataPullController {
     }
 
     @GetMapping("/my-list")
-    public ResponseEntity<?> getMyRequests(@RequestParam String username) {
+    public ResponseEntity<?> getMyRequests(
+            @RequestParam(required = false) String username,
+            Principal principal) {
         return ResponseEntity.ok(ApiResponse.success(
-            service.getRequestsByUser(username), 
+            service.getRequestsByUser(principal.getName()),
             "History retrieved"
         ));
     }

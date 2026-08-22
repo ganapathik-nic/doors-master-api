@@ -5,12 +5,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.dto.ApiResponse;
 import org.gepnic.doors.masterapi.model.User;
 import org.gepnic.doors.masterapi.repository.UserRepository;
+import org.gepnic.doors.masterapi.util.EncryptionUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -23,10 +26,54 @@ public class UserAgentMappingController {
     private final JdbcTemplate jdbcTemplate;
 
     @GetMapping("/master/users/all")
-    public ResponseEntity<ApiResponse<List<User>>> getAllUsers() {
-        log.info("DOORS-ADMIN: Fetching all users for Matrix view");
-        List<User> users = userRepository.findAll();
-        return ResponseEntity.ok(ApiResponse.success(users, "User list retrieved"));
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getAllUsers(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader) {
+        try {
+            log.info("DOORS-ADMIN: Fetching all users for Matrix view");
+            String hybridKey = buildHybridKey(authorizationHeader);
+            List<Map<String, Object>> safeUsers = userRepository.findAll().stream()
+                    .map(this::toSafeUserRecord)
+                    .toList();
+            String serializedUsers = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .findAndRegisterModules()
+                    .writeValueAsString(safeUsers);
+
+            Map<String, Object> encryptedEnvelope = new HashMap<>();
+            encryptedEnvelope.put("isEncryptedPayload", true);
+            encryptedEnvelope.put("secureData", EncryptionUtils.encrypt(serializedUsers, hybridKey));
+            encryptedEnvelope.put("rowCount", safeUsers.size());
+            return ResponseEntity.ok(ApiResponse.success(encryptedEnvelope, "User list retrieved securely"));
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.status(401).body(ApiResponse.error(exception.getMessage(), 401));
+        } catch (Exception exception) {
+            log.error("Unable to encrypt the User-Agent Matrix user list", exception);
+            return ResponseEntity.status(500).body(ApiResponse.error("Unable to secure the user list response", 500));
+        }
+    }
+
+    private Map<String, Object> toSafeUserRecord(User user) {
+        Map<String, Object> record = new HashMap<>();
+        record.put("userId", user.getUserId());
+        record.put("username", user.getUsername());
+        record.put("email", user.getEmail());
+        record.put("role", user.getRole());
+        record.put("isActive", user.getIsActive());
+        record.put("status", user.getStatus());
+        record.put("name", user.getName());
+        record.put("org", user.getOrg());
+        record.put("assignedAgents", user.getAssignedAgents());
+        return record;
+    }
+
+    private String buildHybridKey(String authorizationHeader) {
+        if (authorizationHeader == null || authorizationHeader.isBlank()) {
+            throw new IllegalArgumentException("Authorization token is required");
+        }
+        String rawJwt = authorizationHeader.replaceFirst("(?i)^Bearer\\s+", "").trim();
+        if (rawJwt.length() < 8) {
+            throw new IllegalArgumentException("Authorization token is invalid");
+        }
+        return "D00RS-NI" + rawJwt.substring(rawJwt.length() - 8);
     }
 
     /**

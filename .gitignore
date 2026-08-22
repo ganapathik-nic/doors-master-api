@@ -4,6 +4,28 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Local configuration and secrets ###
+application-local.yml
+application-secrets.yml
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Ignore private PEM material while allowing committed public certificates/keys.
+*.pem
+!security/keys/*.pem
+
+### Logs and temporary files ###
+logs/
+*.log
+*.bak
+*.tmp
+*.temp
+
 ### STS ###
 .apt_generated
 .classpath

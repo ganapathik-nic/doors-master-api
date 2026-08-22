@@ -25,4 +25,6 @@ public class Category {
 
     @Column(nullable = false, length = 100)
     private String name; // e.g., "Management Information System", "Security Audit"
+     @Column(name = "parent_id")
+    private Long parentId;
 }

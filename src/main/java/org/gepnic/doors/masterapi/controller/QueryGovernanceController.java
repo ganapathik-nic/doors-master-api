@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import org.springframework.security.core.Authentication;
 
 @Slf4j
 @RestController
@@ -91,10 +92,11 @@ public class QueryGovernanceController {
     @PostMapping("/propose")
 public ResponseEntity<ApiResponse<SqlTemplate>> propose(
         @RequestBody SqlTemplate template, 
-        @RequestParam String userId) {
+        @RequestParam(required = false) String userId,
+        Authentication authentication) {
     
     // Call your existing service logic
-    SqlTemplate proposed = approvalService.proposeQuery(template, userId);
+    SqlTemplate proposed = approvalService.proposeQuery(template, authentication.getName());
     
     // Return the standardized enterprise response
     return ResponseEntity.ok(
@@ -122,7 +124,8 @@ public ResponseEntity<ApiResponse<List<SqlTemplate>>> listPending() {
     @PostMapping("/approve/{id}")
     public ResponseEntity<SqlTemplate> approve(
             @PathVariable Long id, 
-            @RequestParam String adminId) {
-        return ResponseEntity.ok(approvalService.approveQuery(id, adminId));
+            @RequestParam(required = false) String adminId,
+            Authentication authentication) {
+        return ResponseEntity.ok(approvalService.approveQuery(id, authentication.getName()));
     }
 }

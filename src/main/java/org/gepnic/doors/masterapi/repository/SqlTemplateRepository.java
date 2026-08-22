@@ -25,6 +25,10 @@ public interface SqlTemplateRepository extends JpaRepository<SqlTemplate, Long> 
     // 4. Duplicate Check
     Optional<SqlTemplate> findByUniqueName(String uniqueName);
 
+    boolean existsByUniqueNameIgnoreCase(String uniqueName);
+
+    boolean existsByUniqueNameIgnoreCaseAndQueryIdNot(String uniqueName, Long queryId);
+
     // 5. FIXED: My Submissions Query
     // Uses 'proposerId' to match the Entity field and 'createdAt' from DoorsBaseEntity
     List<SqlTemplate> findByProposerIdOrderByCreatedAtDesc(String proposerId);

@@ -10,7 +10,8 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.gepnic.doors.masterapi.config.AuditContextHolder;
-import org.gepnic.doors.masterapi.dto.ReportExecutionRequest;
+import org.gepnic.doors.masterapi.exception.EncryptionException;
+import org.gepnic.doors.masterapi.exception.DoorsApiException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -23,6 +24,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Aspect
 @Component
@@ -37,9 +39,12 @@ public class AuditAspect {
 
     @Around("execution(* org.gepnic.doors.masterapi.controller.*.*(..))")
     public Object logEverything(ProceedingJoinPoint joinPoint) throws Throwable {
-        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
-        HttpServletRequest request = attributes.getRequest();
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attributes == null) {
+            return joinPoint.proceed();
+        }
 
+        HttpServletRequest request = attributes.getRequest();
         String uri = request.getRequestURI();
 
         if (shouldSkipAudit(uri)) {
@@ -49,10 +54,7 @@ public class AuditAspect {
         long start = System.currentTimeMillis();
         Object[] args = joinPoint.getArgs();
 
-        // 🚀 STEP 1: Extract Request Body to find Query details
         Map<String, Object> bodyMap = extractBodyMap(args);
-        
-        // 🚀 STEP 2: Resolve Query Name (The fix for UNKNOWN_ACTION)
         String detectedQName = resolveActionName(bodyMap, uri);
         
         String detectedAgent = "NA";
@@ -65,36 +67,75 @@ public class AuditAspect {
         Object result = null;
         int statusCode = 200;
         String errorMessage = null;
+        String errorCode = null;
+        String isolatedTraceId = null;
 
         try {
             result = joinPoint.proceed();
             return result;
-        } catch (Exception ex) {
-            statusCode = 500;
-            errorMessage = ex.getMessage();
+        } catch (Throwable ex) {
+            if (ex instanceof DoorsApiException doorsException) {
+                statusCode = doorsException.getStatus().value();
+                errorCode = doorsException.getCode();
+            } else if (ex instanceof SecurityException) {
+                statusCode = 403;
+                errorCode = "DOORS-AUTH-ACCESS-DENIED";
+            } else if (ex instanceof EncryptionException) {
+                statusCode = 500;
+                errorCode = "DOORS-CRYPTO-FAILED";
+            } else if (ex instanceof IllegalArgumentException) {
+                statusCode = 400;
+                errorCode = "DOORS-REQUEST-INVALID";
+            } else {
+                statusCode = 500;
+                errorCode = "DOORS-INTERNAL-ERROR";
+            }
+            String rawMessage = ex.getMessage() != null ? ex.getMessage() : "Internal Gateway Failure";
+            
+            Object boundTrace = request.getAttribute("X-DOORS-TRACE");
+            if (boundTrace != null) {
+                isolatedTraceId = boundTrace.toString();
+            } else {
+                isolatedTraceId = "DOORS-TRC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+            }
+
+            errorMessage = rawMessage;
             throw ex;
         } finally {
             try {
+                // 🚀 1. CAPTURE CONTROLLER-BOUND TRACE ID
+                Object boundTrace = request.getAttribute("X-DOORS-TRACE");
+                if (boundTrace != null) {
+                    isolatedTraceId = boundTrace.toString();
+                } else if (isolatedTraceId == null) {
+                    isolatedTraceId = "DOORS-TRC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+                }
+
                 long duration = System.currentTimeMillis() - start;
                 int records = resolveRecordCount(request);
 
                 String clientIp = resolveClientIp(request);
                 String username = resolveUsername();
                 String fullCurl = generateCurl(request, bodyMap);
-                
-                // 🚀 STEP 3: Concatenate Action + Agent for the final display
-                String finalActionColumn = detectedQName + " " + detectedAgent + "";
 
-                log.info("DOORS-AUDIT: action={}, records={}, status={}, time={}ms", 
-                         finalActionColumn, records, statusCode, duration);
+                Object resolvedAgents = request.getAttribute("X-DOORS-AGENTS");
+                if (resolvedAgents != null && !resolvedAgents.toString().isBlank()) {
+                    detectedAgent = resolvedAgents.toString();
+                }
+                 
+                String finalActionColumn = detectedQName + " " + detectedAgent;
+
+                log.info("DOORS-AUDIT: action={}, records={}, status={}, trace={}, time={}ms, uri={}", 
+                        finalActionColumn, records, statusCode, isolatedTraceId, duration, uri);
 
                 if (shouldPersistAudit(uri)) {
-                    jdbcTemplate.update(
+                    // 🚀 2. UNIFIED SINGLE INSERT WITH FULL COLUMN ALIGNMENT
+                    int rowsWritten = jdbcTemplate.update(
                             "INSERT INTO unified_audit_logs (" +
                                     "event_type, username, query_name, endpoint, method, " +
-                                    "status_code, duration_ms, client_ip, error_message, " +
-                                    "record_count, full_command, execution_time" +
-                                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                                    "status_code, duration_ms, client_ip, error_code, error_message, " +
+                                    "record_count, full_command, trace_id, execution_time" +
+                                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
                             "DATA_RETRIEVAL",
                             username,
                             finalActionColumn,
@@ -103,13 +144,19 @@ public class AuditAspect {
                             statusCode,
                             duration,
                             clientIp,
+                            errorCode,
                             errorMessage,
                             records,
-                            fullCurl
+                            fullCurl,
+                            isolatedTraceId
                     );
+
+                    log.info("✅ AUDIT ROW WRITTEN SUCCESSFULLY: log_id trace=[{}] rows={}", isolatedTraceId, rowsWritten);
+                } else {
+                    log.warn("⚠️ AUDIT SKIPPED BY PERSIST RULE for URI: [{}]", uri);
                 }
             } catch (Exception auditEx) {
-                log.error("AUDIT_LOG_FAIL: {}", auditEx.getMessage());
+                log.error("💥 AUDIT_LOG_PERSIST_ERROR for trace [{}]: {}", isolatedTraceId, auditEx.getMessage(), auditEx);
             } finally {
                 AuditContextHolder.clear();
             }
@@ -117,12 +164,10 @@ public class AuditAspect {
     }
 
     private String resolveActionName(Map<String, Object> bodyMap, String uri) {
-        // 1. Check if the body contains queryUniqueName (Sent by updated Vue UI)
         if (bodyMap.containsKey("queryUniqueName") && bodyMap.get("queryUniqueName") != null) {
             return String.valueOf(bodyMap.get("queryUniqueName"));
         }
 
-        // 2. Check if the body contains queryId (Fallback to DB lookup)
         if (bodyMap.containsKey("queryId") && bodyMap.get("queryId") != null) {
             try {
                 Object qId = bodyMap.get("queryId");
@@ -136,7 +181,6 @@ public class AuditAspect {
             }
         }
 
-        // 3. Fallback to URI parsing (For GET requests or legacy orchestration)
         return detectQueryNameFromUri(uri);
     }
 
@@ -197,6 +241,7 @@ public class AuditAspect {
         }
         return "EXTERNAL_CLIENT";
     }
+
     private String generateCurl(HttpServletRequest request, Map<String, Object> body) {
         try {
             StringBuilder curl = new StringBuilder("curl -X ")
@@ -205,25 +250,18 @@ public class AuditAspect {
                     .append(request.getRequestURL())
                     .append("\" \\\n");
 
-            // 🚀 1. Capture Essential Headers
             String apiKey = request.getHeader("X-API-KEY");
             if (apiKey != null) {
                 curl.append("  -H \"X-API-KEY: ").append(apiKey).append("\" \\\n");
             }
             curl.append("  -H \"Content-Type: application/json\" \\\n");
 
-            // 🚀 2. Capture and Format Body
             if (body != null && !body.isEmpty()) {
                 Map<String, Object> cleanBody = new HashMap<>(body);
-                
-                // Remove internal audit-helper fields so the curl remains pure
                 cleanBody.remove("queryUniqueName");
-                cleanBody.remove("performedBy"); // Optional: remove if you want it exactly like the GUIDE
+                cleanBody.remove("performedBy");
 
-                String jsonBody = objectMapper.writerWithDefaultPrettyPrinter()
-                                              .writeValueAsString(cleanBody);
-                
-                // Indent the JSON for better readability in logs
+                String jsonBody = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(cleanBody);
                 curl.append("  -d '").append(jsonBody).append("'");
             }
 
@@ -233,28 +271,12 @@ public class AuditAspect {
             return "curl-generation-error";
         }
     }
-/* 
-    private String generateCurl(HttpServletRequest request, Map<String, Object> body) {
-        try {
-            StringBuilder curl = new StringBuilder("curl -X ").append(request.getMethod())
-                    .append(" '").append(request.getRequestURL()).append("'");
 
-            if (body != null && !body.isEmpty()) {
-                Map<String, Object> cleanBody = new HashMap<>(body);
-                cleanBody.remove("queryUniqueName"); // Remove audit-only field from curl
-                curl.append(" -d '").append(objectMapper.writeValueAsString(cleanBody)).append("'");
-            }
-            return curl.toString();
-        } catch (Exception e) {
-            return "curl-error";
-        }
-    }
-*/
     private boolean shouldSkipAudit(String uri) {
-        return uri.contains("/audit-logs") || uri.contains("/status") || uri.contains("/auth/");
+        return uri.contains("/audit-logs") || uri.contains("/status") || uri.contains("/auth/") || uri.contains("/telemetry/");
     }
 
     private boolean shouldPersistAudit(String uri) {
-        return uri.contains("/orchestrate") || uri.contains("/execute");
+        return uri.contains("/orchestrate") || uri.contains("/execute") || uri.contains("/gateway");
     }
 }

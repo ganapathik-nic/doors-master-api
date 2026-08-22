@@ -10,13 +10,10 @@ import org.gepnic.doors.masterapi.dto.ApiResponse;
 import org.gepnic.doors.masterapi.service.AiraAgent;
 import org.gepnic.doors.masterapi.service.DatabaseMetadataService;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import java.time.Duration;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.net.Proxy;
 import java.net.ProxySelector;
 
@@ -36,11 +33,9 @@ public class AIraController {
 
     private final AiraAgent airaAgent;
     private final DatabaseMetadataService metadataService;
-    private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate = new RestTemplate();
- public AIraController(DatabaseMetadataService metadataService, JdbcTemplate jdbcTemplate) {
+ public AIraController(DatabaseMetadataService metadataService) {
     this.metadataService = metadataService;
-    this.jdbcTemplate = jdbcTemplate;
 
     // Direct initialization - System properties in main() will handle the bypass
     OllamaChatModel model = OllamaChatModel.builder()
@@ -79,29 +74,8 @@ public class AIraController {
             compositeResult.put("answer", aiResponseText);
             compositeResult.put("executionData", new ArrayList<>());
 
-            // 5. Autonomous SQL Detection and Execution
-            String extractedSql = extractSqlFromMarkdown(aiResponseText);
-            
-            if (extractedSql != null) {
-                String cleanSql = extractedSql.replaceAll(";$", "").trim();
-                
-                // Security Check: Only SELECT allowed
-                if (cleanSql.toUpperCase().startsWith("SELECT") && !isDangerous(cleanSql)) {
-                    log.info("AIra-CORE: Executing Audit Query: [{}]", cleanSql);
-                    try {
-                        // Safety limit if not present
-                        String safeSql = cleanSql.toUpperCase().contains("LIMIT") ? cleanSql : cleanSql + " LIMIT 15";
-                        List<Map<String, Object>> rows = jdbcTemplate.queryForList(safeSql);
-                        compositeResult.put("executionData", rows);
-                    } catch (Exception sqlEx) {
-                        log.error("AIra-CORE: Database error", sqlEx);
-                        compositeResult.put("sqlError", "Data retrieval error: " + sqlEx.getMessage());
-                    }
-                } else {
-                    log.warn("AIra-SECURITY: Blocked attempt: [{}]", cleanSql);
-                    compositeResult.put("sqlError", "Security Policy: Unauthorized operation blocked.");
-                }
-            }
+            // Model output is advisory text only. Never execute SQL emitted by the model.
+            compositeResult.put("executionDisabled", true);
 
             return ResponseEntity.ok(ApiResponse.success(compositeResult, "AIra Analysis Complete"));
 
@@ -109,25 +83,6 @@ public class AIraController {
             log.error("AIra-CORE: System failure", e);
             return ResponseEntity.status(503).body(ApiResponse.error("AIra Intelligence Core Offline", 503));
         }
-    }
-
-    private String extractSqlFromMarkdown(String text) {
-        Pattern pattern = Pattern.compile("```sql\\s+(.*?)\\s+```", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
-        Matcher matcher = pattern.matcher(text);
-        if (matcher.find()) return matcher.group(1).trim();
-        
-        Pattern selectPattern = Pattern.compile("(SELECT\\s+.*?FROM\\s+.*?)(?=\\n|;|$)", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
-        Matcher selectMatcher = selectPattern.matcher(text);
-        if (selectMatcher.find()) return selectMatcher.group(1).trim();
-        
-        return null;
-    }
-
-    private boolean isDangerous(String sql) {
-        String upper = sql.toUpperCase();
-        return upper.contains("DELETE") || upper.contains("DROP") || 
-               upper.contains("UPDATE") || upper.contains("TRUNCATE") || 
-               upper.contains("ALTER")  || upper.contains("GRANT");
     }
 
     @GetMapping("/status")

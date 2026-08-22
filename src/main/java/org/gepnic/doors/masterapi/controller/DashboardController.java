@@ -38,28 +38,38 @@ public class DashboardController {
         Map<String, Object> stats = new HashMap<>();
 
         try {
-            String agentSql = "SELECT agent_id FROM user_authorized_agents WHERE user_name ILIKE ?";
+            String agentSql = """
+                SELECT DISTINCT uaa.agent_id
+                FROM user_authorized_agents uaa
+                JOIN agents a ON a.agent_id = uaa.agent_id
+                WHERE LOWER(TRIM(uaa.user_name)) = LOWER(TRIM(?))
+                  AND a.is_active = true
+                ORDER BY uaa.agent_id
+                """;
         List<Map<String, Object>> mappedAgentsList = jdbcTemplate.queryForList(agentSql, loginUser);
         
         stats.put("mappedAgents", mappedAgentsList); // Send the whole list
         stats.put("mappedAgentsCount", mappedAgentsList.size());
             // 🚀 FIX 1: Use 'user_name' as per your \d output
             // 🚀 FIX 2: Added a check for 'user_id' just in case your system stores the ID there
-            Integer mappedAgents = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name ILIKE ? OR user_id = ?", 
-                Integer.class, loginUser, loginUser);
-            
-            stats.put("mappedAgentsCount", mappedAgents != null ? mappedAgents : 0);
-
             // 🚀 FIX 3: Robust Recent Reports query
             // If 'category' column fails, check if you named it 'category_name' in sql_templates
             String reportsSql = """
-                SELECT unique_name, category, created_at 
-                FROM sql_templates 
-                WHERE status = 'APPROVED' 
-                ORDER BY created_at DESC LIMIT 5
+                SELECT DISTINCT t.unique_name,
+                       COALESCE(t.category, 'Uncategorised') AS category_name,
+                       t.created_at
+                FROM sql_templates t
+                JOIN sql_template_authorized_agents staa ON staa.query_id = t.query_id
+                JOIN user_authorized_agents uaa ON uaa.agent_id = staa.agent_id
+                JOIN agents a ON a.agent_id = staa.agent_id
+                WHERE LOWER(TRIM(uaa.user_name)) = LOWER(TRIM(?))
+                  AND UPPER(t.status) = 'APPROVED'
+                  AND t.is_active = true
+                  AND a.is_active = true
+                ORDER BY t.created_at DESC
+                LIMIT 5
                 """;
-            stats.put("recentReports", jdbcTemplate.queryForList(reportsSql));
+            stats.put("recentReports", jdbcTemplate.queryForList(reportsSql, loginUser));
 
             return ResponseEntity.ok(ApiResponse.success(stats, "User stats loaded"));
 
@@ -115,8 +125,18 @@ public class DashboardController {
                 "SELECT COUNT(*) FROM users WHERE status ='PENDING' ", Integer.class);
             stats.put("pendingUsers", pendingUsers != null ? pendingUsers : 0);
 // Count Pending Data Requests (status != 'APPROVED')
+//Integer pendingDataRequests = jdbcTemplate.queryForObject(
+//    "SELECT COUNT(*) FROM data_pull_requests WHERE (status <> 'APPROVED'", Integer.class);
+//stats.put("pendingDataRequests", pendingDataRequests != null ? pendingDataRequests : 0);
+    
+// ❌ INCORRECT (Syntax error, insert ")" to complete MethodInvocation)
+// Integer pendingDataRequests = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM data_pull_requests WHERE (status = 'SUBMITTED'", Integer.class);
+
+// ✅ CORRECT
 Integer pendingDataRequests = jdbcTemplate.queryForObject(
-    "SELECT COUNT(*) FROM data_pull_requests WHERE status <> 'APPROVED'", Integer.class);
+    "SELECT COUNT(*) FROM data_pull_requests WHERE status = 'SUBMITTED'", 
+    Integer.class
+);
 stats.put("pendingDataRequests", pendingDataRequests != null ? pendingDataRequests : 0);
             // 4. Recent Governance Activity (Last 5 actions)
             String recentSql = """

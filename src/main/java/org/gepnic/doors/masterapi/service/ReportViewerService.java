@@ -7,13 +7,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.config.AuditContextHolder;
 import org.gepnic.doors.masterapi.dto.ReportExecutionRequest;
+import org.gepnic.doors.masterapi.dto.ReportPagination;
 import org.gepnic.doors.masterapi.dto.SelectionOption;
 import org.gepnic.doors.masterapi.dto.ReportResult;
+import org.gepnic.doors.masterapi.exception.DoorsApiException;
 import org.gepnic.doors.masterapi.model.Agent; 
 import org.gepnic.doors.masterapi.repository.AgentRepository; 
 import org.gepnic.doors.masterapi.repository.ReportMappingRepository;
 import org.gepnic.doors.masterapi.util.EncryptionUtils;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,7 +83,15 @@ public class ReportViewerService {
     public ReportResult executeReport(ReportExecutionRequest request) {
         List<Map<String, Object>> aggregatedResults = new ArrayList<>();
         List<String> offlineAgents = new ArrayList<>();
+        Map<String, String> nodeErrors = new LinkedHashMap<>();
         int actualAuditCount = 0;
+        long totalRows = 0L;
+        long totalPages = 1L;
+        boolean paginationEnabled = false;
+        int requestedPage = request.getPage() != null ? Math.max(request.getPage(), 1) : 1;
+        int requestedPageSize = request.getPageSize() != null
+                ? Math.max(1, Math.min(request.getPageSize(), 200))
+                : 100;
 
         try {
             // 🛡️ 1. Security Scan: Input Parameters
@@ -141,6 +152,8 @@ public class ReportViewerService {
                     payload.put("sql", sql);
                     payload.put("executedBy", request.getPerformedBy());
                     payload.put("params", sanitizedParams);
+                    payload.put("page", requestedPage);
+                    payload.put("pageSize", requestedPageSize);
                     payload.put("agentType", agent.getAgentType());
                     payload.put("instanceCode", extractedInstanceCode); 
 
@@ -162,7 +175,14 @@ public class ReportViewerService {
                     String rawBody = response.getBody();
 
                     if (rawBody != null && !rawBody.isBlank()) {
+                        AgentPage agentPage = parseAgentPage(rawBody);
+                        if (!agentPage.success()) {
+                            throw new IllegalStateException(agentPage.error());
+                        }
                         List<Map<String, Object>> rows = extractRows(rawBody);
+                        totalRows += agentPage.totalRows();
+                        totalPages = Math.max(totalPages, agentPage.totalPages());
+                        paginationEnabled = paginationEnabled || agentPage.paginationEnabled();
 
                         for (Map<String, Object> complexRow : rows) {
                             Map<String, Object> flatRow = new HashMap<>();
@@ -184,10 +204,27 @@ public class ReportViewerService {
                 } catch (Exception nodeEx) {
                     log.error("DOORS-MASTER: Node [{}] execution pipe failure: {}", agentIdTrimmed, nodeEx.getMessage(), nodeEx);
                     offlineAgents.add(agentIdTrimmed);
+                    nodeErrors.put(agentIdTrimmed, mostSpecificMessage(nodeEx));
                 }
             }
+
+            if (!nodeErrors.isEmpty()) {
+                throw agentExecutionException(request.getQueryUniqueName(), nodeErrors);
+            }
+
             setRecordCountForAudit(actualAuditCount);
-            return new ReportResult(aggregatedResults, offlineAgents);
+            ReportPagination pagination = paginationEnabled
+                    ? new ReportPagination(
+                            true,
+                            requestedPage,
+                            requestedPageSize,
+                            totalRows,
+                            totalPages,
+                            100,
+                            "Blank parameter result exceeds 100 rows"
+                    )
+                    : ReportPagination.disabled(totalRows > 0L ? totalRows : actualAuditCount);
+            return new ReportResult(aggregatedResults, offlineAgents, nodeErrors, pagination);
 
         } catch (SecurityException se) {
             throw se;
@@ -358,12 +395,105 @@ public class ReportViewerService {
         if (input == null) return new HashMap<>();
         Map<String, Object> sanitized = new HashMap<>();
         input.forEach((key, value) -> {
-            if (value == null) { sanitized.put(key, null); return; }
+            String normalizedKey = key == null ? "" : key.trim()
+                    .replaceAll("^[{:'\"]+", "")
+                    .replaceAll("[}'\"]+$", "");
+            if (normalizedKey.isEmpty()) return;
+            if (value == null) { sanitized.put(normalizedKey, null); return; }
             String text = value.toString().trim();
-            if (text.matches("^\\d+$")) {
-                 try { sanitized.put(key, Long.parseLong(text)); } catch (Exception e) { sanitized.put(key, value); }
-            } else { sanitized.put(key, value); }
+            // Keep UI parameters as text. Approved SQL templates are responsible
+            // for explicit type conversion (for example CAST(:p_user_id AS BIGINT)).
+            // Coercing digit-only values to Long here makes expressions such as
+            // TRIM(:p_user_id) fail in PostgreSQL and causes Dry Run and
+            // Interactive Report execution to bind different JDBC types.
+            sanitized.put(normalizedKey, text);
         });
         return sanitized;
     }
+
+    private DoorsApiException agentExecutionException(
+            String queryName,
+            Map<String, String> nodeErrors) {
+        String failureDetails = nodeErrors.entrySet().stream()
+                .map(entry -> entry.getKey() + ": " + entry.getValue())
+                .collect(Collectors.joining("; "));
+        String normalized = failureDetails.toLowerCase(Locale.ROOT);
+
+        HttpStatus status = HttpStatus.BAD_GATEWAY;
+        String code = "DOORS-AGENT-EXECUTION-FAILED";
+        String type = "agent-execution-failed";
+        String title = "Agent execution failed";
+        boolean retryable = false;
+
+        if ((normalized.contains("function") || normalized.contains("procedure"))
+                && (normalized.contains("does not exist")
+                    || normalized.contains("not found")
+                    || normalized.contains("42883"))) {
+            code = "DOORS-AGENT-FUNCTION-NOT-FOUND";
+            type = "agent-function-not-found";
+            title = "Backend function unavailable";
+        } else if (normalized.contains("timed out") || normalized.contains("timeout")) {
+            status = HttpStatus.GATEWAY_TIMEOUT;
+            code = "DOORS-AGENT-TIMEOUT";
+            type = "agent-timeout";
+            title = "Agent response timed out";
+            retryable = true;
+        } else if (normalized.contains("connection refused")
+                || normalized.contains("no route to host")
+                || normalized.contains("service unavailable")
+                || normalized.contains("503")) {
+            status = HttpStatus.SERVICE_UNAVAILABLE;
+            code = "DOORS-AGENT-UNAVAILABLE";
+            type = "agent-unavailable";
+            title = "Agent unavailable";
+            retryable = true;
+        }
+
+        Map<String, Object> extensions = new LinkedHashMap<>();
+        extensions.put("queryName", queryName);
+        extensions.put("failedAgents", new ArrayList<>(nodeErrors.keySet()));
+
+        return new DoorsApiException(
+                status,
+                code,
+                type,
+                title,
+                "Execution failed for query '" + queryName + "'. " + failureDetails,
+                retryable,
+                extensions);
+    }
+
+    private AgentPage parseAgentPage(String rawBody) throws Exception {
+        JsonNode root = objectMapper.readTree(rawBody);
+        boolean success = !root.has("success") || root.path("success").asBoolean(true);
+        String error = root.path("error").asText("Agent execution failed");
+        JsonNode pagination = root.path("pagination");
+        long rowCount = root.path("data").isArray() ? root.path("data").size() : 0L;
+        return new AgentPage(
+                success,
+                error,
+                pagination.path("enabled").asBoolean(false),
+                pagination.path("totalRows").asLong(rowCount),
+                Math.max(1L, pagination.path("totalPages").asLong(1L))
+        );
+    }
+
+    private String mostSpecificMessage(Exception exception) {
+        Throwable cause = exception;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message != null && !message.isBlank()
+                ? message
+                : cause.getClass().getSimpleName();
+    }
+
+    private record AgentPage(
+            boolean success,
+            String error,
+            boolean paginationEnabled,
+            long totalRows,
+            long totalPages
+    ) {}
 }

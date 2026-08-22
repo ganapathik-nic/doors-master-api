@@ -37,6 +37,12 @@ public class SqlTemplate extends DoorsBaseEntity {
     @Column(name = "category", length = 50)
     private String category; 
 
+    @Column(name = "subcategory", length = 100)
+    private String subcategory;
+
+    @Column(name = "default_agent_id", length = 100)
+    private String defaultAgentId;
+
     @Column(name = "status", length = 20)
     private String status = "PENDING"; 
 

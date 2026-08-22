@@ -24,4 +24,10 @@ public class ClientQueryMap {
 
     @Column(name = "assigned_at")
     private LocalDateTime assignedAt = LocalDateTime.now();
+
+    @Column(name = "response_filter_column")
+    private String responseFilterColumn;
+
+    @Column(name = "response_filter_value")
+    private String responseFilterValue;
 }

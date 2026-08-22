@@ -66,8 +66,29 @@ public class User {
     )
     @Column(name = "agent_id")
     private List<String> assignedAgents = new ArrayList<>();
-@Column(name = "current_session_id")
+    @Column(name = "current_session_id")
 private String currentSessionId;
+
+    @Column(name = "mfa_enabled", nullable = false)
+    private Boolean mfaEnabled = false;
+
+    @Column(name = "mfa_secret_encrypted", columnDefinition = "TEXT")
+    private String mfaSecretEncrypted;
+
+    @Column(name = "vpn_ip", length = 64)
+    private String vpnIp;
+
+    @Column(name = "vpn_certificate_reference")
+    private String vpnCertificateReference;
+
+    @Column(name = "vpn_status", length = 30, nullable = false)
+    private String vpnStatus = "NOT_REQUIRED";
+
+    @Column(name = "privileged_approved_by")
+    private String privilegedApprovedBy;
+
+    @Column(name = "privileged_approved_at")
+    private LocalDateTime privilegedApprovedAt;
     // Helper method to ensure list is never null
     public List<String> getAssignedAgents() {
         if (this.assignedAgents == null) {

@@ -63,16 +63,54 @@ public class AgentExecutionService {
         }
 
         // 3. 🚀 THE ARCHITECTURE REFACTOR ROUTER
-        int lastSlashIndex = rawBaseUrl.lastIndexOf("/");
-        if (lastSlashIndex == -1 || lastSlashIndex < rawBaseUrl.indexOf("://") + 3) {
+        int schemeSeparator = rawBaseUrl.indexOf("://");
+        int authorityStart = schemeSeparator + 3;
+        if (schemeSeparator <= 0 ||
+                authorityStart >= rawBaseUrl.length() ||
+                rawBaseUrl.indexOf('/', authorityStart) == authorityStart) {
             throw new IllegalArgumentException("Malformed base_url in registry for agent: " + agentId);
         }
 
-        // e.g., "dev-02" or "assam"
-        String extractedInstanceCode = rawBaseUrl.substring(lastSlashIndex + 1); 
-        
-        // e.g., "http://127.0.0.1:8051" or "https://demoetenders.tn.nic.in/doorsagent"
-        String proxyNetworkRoot = rawBaseUrl.substring(0, lastSlashIndex); 
+        String extractedInstanceCode =
+                agent.getAgentInstanceCode() != null &&
+                !agent.getAgentInstanceCode().isBlank()
+                        ? agent.getAgentInstanceCode().trim()
+                        : agentId.trim();
+        String proxyNetworkRoot = rawBaseUrl;
+
+        String configuredSuffix = "/" + extractedInstanceCode;
+        boolean hasConfiguredSuffix =
+                rawBaseUrl.length() >= configuredSuffix.length() &&
+                rawBaseUrl.regionMatches(
+                        true,
+                        rawBaseUrl.length() - configuredSuffix.length(),
+                        configuredSuffix,
+                        0,
+                        configuredSuffix.length()
+                );
+        if (hasConfiguredSuffix) {
+            proxyNetworkRoot = rawBaseUrl.substring(
+                    0,
+                    rawBaseUrl.length() - configuredSuffix.length()
+            );
+        } else {
+            int legacyMarker = rawBaseUrl.toLowerCase(Locale.ROOT)
+                    .lastIndexOf("/doorsagent/");
+            if (legacyMarker >= authorityStart) {
+                String legacyInstanceCode = rawBaseUrl.substring(
+                        legacyMarker + "/doorsagent/".length()
+                );
+                if (!legacyInstanceCode.isBlank() &&
+                        !legacyInstanceCode.contains("/")) {
+                    extractedInstanceCode = legacyInstanceCode;
+                    proxyNetworkRoot = rawBaseUrl.substring(
+                            0,
+                            rawBaseUrl.length() -
+                                    legacyInstanceCode.length() - 1
+                    );
+                }
+            }
+        }
 
         // 🎯 THE CRITICAL ALIGNMENT FIX: Target the raw, unslashed root endpoint configuration
         String endpoint = proxyNetworkRoot + "/v1/agent/query/dry-run";
@@ -82,10 +120,41 @@ public class AgentExecutionService {
         // 4. Build outbound payload envelope frame matching your Agent requirements
         Map<String, Object> agentPayload = new HashMap<>();
         
-        // Decode Base64 string safely before handoff to unpooled agent
+       // 🛡️ THE DECODING WORKFLOW ARCHITECTURE (HARDENED 🔐)
+        // 🛡️ THE DECODING WORKFLOW ARCHITECTURE (CORRECTED SPACING 🔐)
         String decodedSql = "";
         if (base64Payload != null && !base64Payload.isBlank()) {
-            decodedSql = new String(Base64.getDecoder().decode(base64Payload.trim()));
+            
+            // 1. Strip whitespaces ONLY for the raw ciphertext transport wrapper stage
+            String sanitizedPayload = stripMatchingSqlQuotes(base64Payload.trim());
+            if (!looksLikePlainSql(sanitizedPayload)) {
+                sanitizedPayload = sanitizedPayload.replaceAll("\\s", "");
+            }
+            
+            // 2. CRYPTOGRAPHIC EVALUATION GATEWAY
+            if (!looksLikePlainSql(sanitizedPayload) && sanitizedPayload.length() > 30) {
+                try {
+                    log.info("DOORS-DRYRUN-SERVICE: Decrypting secured transit envelope...");
+                    sanitizedPayload = EncryptionUtils.decrypt(sanitizedPayload);
+                    // 🚀 DO NOT execute a global "\\s" replacement here! It strips out legitimate SQL spaces.
+                    sanitizedPayload = stripMatchingSqlQuotes(sanitizedPayload.trim());
+                } catch (Exception cryptoEx) {
+                    log.debug("DOORS-DRYRUN-SERVICE: Cipher pass skipped. Parsing payload as raw string.");
+                }
+            }
+
+            // 3. SECURE STRINGS BASE64 EXTRACTION
+            try {
+                // If it's a Base64 payload block string, remove its specific transit spacing parameters
+                String base64TargetStr = sanitizedPayload.replaceAll("\\s", "");
+                byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64TargetStr);
+                decodedSql = new String(decodedBytes, java.nio.charset.StandardCharsets.UTF_8);
+                log.info("DOORS-DRYRUN-SERVICE: Successfully unpacked Base64 statement query data template.");
+            } catch (IllegalArgumentException decodeEx) {
+                log.warn("DOORS-DRYRUN-SERVICE: Payload string was plain text text layout. Using stream as matches.");
+                // 🎯 Keep the spaces intact!
+                decodedSql = sanitizedPayload; 
+            }
         }
         agentPayload.put("sql", decodedSql);
         agentPayload.put("params", params != null ? params : new HashMap<>());
@@ -109,11 +178,44 @@ public class AgentExecutionService {
 
             @SuppressWarnings("unchecked")
             Map<String, Object> response = restTemplate.postForObject(endpoint, agentPayload, Map.class);
-            return response != null ? response : new HashMap<>();
+            if (response == null) {
+                throw new IllegalStateException("Agent dry-run endpoint returned an empty response");
+            }
+            if (Boolean.FALSE.equals(response.get("success"))) {
+                Object agentMessage = response.get("message");
+                throw new IllegalStateException(
+                        agentMessage != null && !agentMessage.toString().isBlank()
+                                ? agentMessage.toString()
+                                : "Agent rejected the dry-run request"
+                );
+            }
+            return response;
+        } catch (IllegalStateException ex) {
+            throw ex;
         } catch (Exception ex) {
             log.error("DOORS-GOVERNANCE: Proxy handoff failure or encryption fault on route [{}]: {}", endpoint, ex.getMessage());
-            throw new RuntimeException(ex.getMessage(), ex); // Transform checked exception to unmanaged RuntimeException
+            throw new IllegalStateException(
+                    "Unable to execute dry-run through agent " + agentId +
+                            ": " + ex.getMessage(),
+                    ex
+            );
         }
+    }
+    private boolean looksLikePlainSql(String value) {
+        if (value == null) return false;
+        String normalized = value.stripLeading().toUpperCase(Locale.ROOT);
+        return normalized.startsWith("SELECT") || normalized.startsWith("WITH");
+    }
+
+    private String stripMatchingSqlQuotes(String value) {
+        if (value == null || value.length() < 2) return value;
+        char first = value.charAt(0);
+        char last = value.charAt(value.length() - 1);
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            String candidate = value.substring(1, value.length() - 1).trim();
+            if (looksLikePlainSql(candidate)) return candidate;
+        }
+        return value;
     }
 
     private void validateParams(Map<String, Object> params) {

@@ -12,6 +12,7 @@ import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.transport.logging.AdvancedByteBufFormat;
@@ -25,13 +26,12 @@ public class WebConfig implements WebMvcConfigurer {
     private final ApiKeyInterceptor apiKeyInterceptor;
 
     /**
-     * Configures a WebClient Builder with:
-     * 1. 100MB Memory Buffer (Fixes 502 Proxy Error for large JSON)
-     * 2. SSL Trust Bypass (Fixes PKIX path building failed on Windows/Staging)
+     * WebClient Builder configuration:
+     * 1. 100MB Memory Buffer for heavy payload responses.
+     * 2. SSL Trust Bypass for internal server loops.
      */
     @Bean
     public WebClient.Builder webClientBuilder() throws SSLException {
-        // 1. Setup SSL bypass for government CAs/Windows Dev
         SslContext sslContext = SslContextBuilder.forClient()
                 .trustManager(InsecureTrustManagerFactory.INSTANCE)
                 .build();
@@ -40,7 +40,6 @@ public class WebConfig implements WebMvcConfigurer {
                 .wiretap("reactor.netty.http.client.HttpClient", LogLevel.DEBUG, AdvancedByteBufFormat.TEXTUAL)
                 .secure(t -> t.sslContext(sslContext));
 
-        // 2. Setup Memory Strategies (Increase from 256KB to 100MB)
         ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(clientCodecConfigurer -> clientCodecConfigurer
                         .defaultCodecs()
@@ -53,9 +52,22 @@ public class WebConfig implements WebMvcConfigurer {
     }
 
     @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+       
+    registry.addResourceHandler("/swagger-autofill.js")
+            .addResourceLocations("classpath:/static/");
+}
+    
+
+    @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                .allowedOriginPatterns("http://localhost:5000")
+                .allowedOriginPatterns(
+                        "http://localhost:*",
+                        "http://127.0.0.1:*",
+                        "http://demoetenders.tn.nic.in:*",
+                        "https://demoetenders.tn.nic.in"
+                )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true)
@@ -69,4 +81,5 @@ public class WebConfig implements WebMvcConfigurer {
                 .addPathPatterns("/api/v1/master/gateway/orchestrate/**")
                 .addPathPatterns("/api/v1/reports/execute/**");
     }
+
 }

@@ -34,9 +34,11 @@ public class UnifiedAuditLog {
     @Column(name = "method")
     private String method; // GET, POST, etc.
 
+    // 🚀 ALIGNED PROPERTY REFERENCE: Maps response_status / status_code safely
     @Column(name = "status_code")
     private Integer statusCode;
 
+    // 🚀 ALIGNED PROPERTY REFERENCE: Maps execution_time_ms / duration_ms safely
     @Column(name = "duration_ms")
     private Long durationMs;
 
@@ -45,6 +47,16 @@ public class UnifiedAuditLog {
 
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
+
+    @Column(name = "error_code", length = 100)
+    private String errorCode;
+
+    @Column(name = "record_count")
+    private Integer recordCount;
+
+    // 🚀 THE CRITICAL ADDITION: Bridges the indexed PostgreSQL trace column to your entity map pipeline
+    @Column(name = "trace_id", length = 50)
+    private String traceId;
 
     @Column(name = "execution_time", insertable = false, updatable = false)
     private LocalDateTime executionTime;

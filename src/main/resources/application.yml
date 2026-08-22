@@ -1,10 +1,10 @@
 server:
   port: 8052
- 
   max-http-header-size: 64KB # Handle large metadata/column counts
   tomcat:
     connection-timeout: 600000 # 10 minutes (matches your Apache ProxyTimeout)
     keep-alive-timeout: 600000
+
 spring:
   main:
     headless: true  # 🛡️ Fix for Captcha generation on Linux/Headless servers
@@ -14,14 +14,20 @@ spring:
     password: 
     driver-class-name: org.postgresql.Driver
 
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+
   jpa:
     hibernate:
       naming:
-        # This prevents Hibernate from turning 'requestId' into 'request_id' automatically 
+        # Prevents Hibernate from turning 'requestId' into 'request_id' automatically 
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
         implicit-strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyJpaImpl     
-       
-      ddl-auto: none # We manage our schema with Flyway, so no auto changes   
+        
+      ddl-auto: none # Managed via Flyway
     show-sql: true
     properties:
       hibernate:
@@ -36,9 +42,24 @@ spring:
       max-file-size: 100MB
       max-request-size: 100MB
       enabled: true
-# Portal Registry
+
+# Portal Registry Configuration
 doors:
+  contracts:
+    # Enable only in staging. One successful Swagger execution then records the
+    # inferred schema (never the response values) for the selected uniqueName.
+    capture-observed-responses: ${DOORS_CONTRACT_CAPTURE_ENABLED:false}
   security:
+    # Production must override this with a stable, randomly generated Base64
+    # 32-byte value through DOORS_SECURITY_MFA_ENCRYPTION_KEY.
+    mfa-encryption-key: ${DOORS_SECURITY_MFA_ENCRYPTION_KEY:REVWRUxPUE1FTlQtT05MWS0zMi1CWVRFLUtFWSEhISE=}
+    manager-plane-enforced: ${DOORS_SECURITY_MANAGER_PLANE_ENFORCED:false}
+    manager-plane-token: ${DOORS_SECURITY_MANAGER_PLANE_TOKEN:LOCAL-DEVELOPMENT-ONLY}
+    bootstrap-legacy-admin-enabled: ${DOORS_SECURITY_BOOTSTRAP_LEGACY_ADMIN_ENABLED:false}
+    bootstrap-security-admin:
+      username: ${DOORS_SECURITY_ADMIN_USERNAME:}
+      email: ${DOORS_SECURITY_ADMIN_EMAIL:}
+      password: ${DOORS_SECURITY_ADMIN_PASSWORD:}
     allowed-origins:
       - "http://localhost:*"
       - "http://127.0.0.1:*"
@@ -47,17 +68,16 @@ doors:
     rate-limit:
       # Policy for Human Interactive Users (UI)
       ui:
-        capacity: 10          # Number of clicks allowed in the burst
-        refill-minutes: 1     # How often the bucket refills fully
-        penalty-minutes: 1    # (Logic-only) Duration for strict lockout if needed
-      # Policy for the Trusted Orchestration Server (API Gateway)
+        capacity: 10          # Number of clicks allowed in burst
+        refill-minutes: 1     # Refill interval
+        penalty-minutes: 1    # Lockout duration if breached
+      # Policy for Trusted Gateway Integration
       gateway:
-        capacity: 5       # Much higher for automated system loops
+        capacity: 5           # Capacity for automated loops
         refill-minutes: 1
-    jwt-expiration-ms: 14400000 #4 hours
-    # Define which paths are considered "Gateway"
-    # This keeps your Filter code clean
+    jwt-expiration-ms: 14400000 # 4 Hours
     gateway-path-pattern: "/v1/master/gateway/orchestrate/"     
+
 crypto:
   keys-directory: ./security/keys/
   
@@ -67,13 +87,32 @@ app:
       name: "Main Portal"
       url: "http://localhost:8051"
   security:
-    enabled: true # Set to false to allow browser testing from any IP
-    # This is your whitelist. Add your Master API's IP here.
-    # You can override this in production using the environment variable: ALLOWED_MASTERS
+    enabled: true
     allowed-masters: ${ALLOWED_MASTERS:10.246.129.229,10.246.129.225,localhost,127.0.0.1,0:0:0:0:0:0:0:1}
+
 logging:
   level:
     org.springframework.jdbc.core.JdbcTemplate: DEBUG
     org.springframework.jdbc.datasource.DataSourceUtils: DEBUG 
     org.hibernate.orm.results: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+springdoc:
+  cache:
+    # Enable in staging while discovering contracts so /v3/api-docs reflects
+    # newly captured schemas without restarting Master API.
+    disabled: ${DOORS_OPENAPI_CACHE_DISABLED:false}
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  paths-to-match:
+    - /api/v1/master/gateway/orchestrate/**
+  show-actuator: false
+  packages-to-scan: org.gepnic.doors.masterapi.controller
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: alpha
+    doc-expansion: full
+    disable-swagger-default-url: true
+    config-url: /v3/api-docs/swagger-config
+    url: /v3/api-docs

@@ -1,5 +1,6 @@
 package org.gepnic.doors.masterapi.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -24,6 +28,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
     private final ApiClientRepository apiClientRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
@@ -39,9 +44,10 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         if (clientOpt.isPresent()) {
             ApiClient client = clientOpt.get();
             if (!client.getIpWhitelist().isEmpty() && !client.getIpWhitelist().contains(incomingIp)) {
-                logSecurityFailure(request, "IP " + incomingIp + " unauthorized", apiKey, client);
-                response.setStatus(403);
-                response.getWriter().write("Forbidden: IP not authorized");
+                String traceId = logSecurityFailure(
+                        request, "IP address is not authorized", client, 403, "DOORS-AUTH-IP-DENIED");
+                writeProblem(response, 403, "DOORS-AUTH-IP-DENIED", "ip-address-denied",
+                        "IP address denied", "The source IP is not authorized for this API client.", traceId);
                 return false; 
             }
         }
@@ -54,15 +60,24 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
         // 🚀 GATE 3: External enforce
         if (clientOpt.isEmpty()) {
-            logSecurityFailure(request, "Invalid API Key", apiKey, null);
-            response.setStatus(401);
+            String traceId = logSecurityFailure(
+                    request, "Invalid API key", null, 401, "DOORS-AUTH-INVALID-API-KEY");
+            writeProblem(response, 401, "DOORS-AUTH-INVALID-API-KEY", "invalid-api-key",
+                    "Invalid API key", "The supplied API key is missing or invalid.", traceId);
             return false;
         }
 
         return true; 
     }
 
-    private void logSecurityFailure(HttpServletRequest request, String reason, String apiKey, ApiClient client) {
+    private String logSecurityFailure(
+            HttpServletRequest request,
+            String reason,
+            ApiClient client,
+            int status,
+            String errorCode) {
+        String traceId = "DOORS-TRC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        request.setAttribute("X-DOORS-TRACE", traceId);
         try {
             String uri = request.getRequestURI();
             String queryName = "BLOCKED_ACCESS";
@@ -80,23 +95,51 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
             jdbcTemplate.update(
     "INSERT INTO unified_audit_logs (event_type, username, query_name, endpoint, method, " +
-    "status_code, client_ip, error_message, record_count, full_command, duration_ms, execution_time) " +
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+    "status_code, client_ip, error_code, error_message, record_count, full_command, duration_ms, trace_id, execution_time) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
     "SECURITY_VIOLATION",
     clientName,
     displayAction, 
     uri,
     request.getMethod(),
-    403,
+    status,
     getClientIp(request),
+    errorCode,
     reason,
     0,                   // record_count
     "curl -X " + request.getMethod() + " '" + request.getRequestURL() + "'", // full_command
-    0                    // duration_ms
+    0,                   // duration_ms
+    traceId
 );
         } catch (Exception e) {
             log.error("FAILSAFE: Audit log failed - {}", e.getMessage());
         }
+        return traceId;
+    }
+
+    private void writeProblem(
+            HttpServletResponse response,
+            int status,
+            String code,
+            String problemType,
+            String title,
+            String detail,
+            String traceId) throws Exception {
+        Map<String, Object> problem = new LinkedHashMap<>();
+        problem.put("type", "https://doors.nic.in/problems/" + problemType);
+        problem.put("title", title);
+        problem.put("status", status);
+        problem.put("detail", detail);
+        problem.put("instance", "/problems/occurrences/" + traceId);
+        problem.put("code", code);
+        problem.put("traceId", traceId);
+        problem.put("retryable", false);
+
+        response.setStatus(status);
+        response.setHeader("X-DOORS-TRACE", traceId);
+        response.setContentType("application/problem+json");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        objectMapper.writeValue(response.getWriter(), problem);
     }
 
     private String getClientIp(HttpServletRequest request) {

@@ -6,7 +6,9 @@ import org.gepnic.doors.masterapi.dto.ApiResponse;
 import org.gepnic.doors.masterapi.dto.MappingRequest;
 import org.gepnic.doors.masterapi.model.SqlTemplate;
 import org.gepnic.doors.masterapi.repository.DataPullRequestRepository;
+import org.gepnic.doors.masterapi.repository.ClientQueryMapRepository;
 import org.gepnic.doors.masterapi.repository.SqlTemplateRepository;
+import org.gepnic.doors.masterapi.repository.AgentRepository;
 import org.gepnic.doors.masterapi.service.AgentExecutionService;
 import org.gepnic.doors.masterapi.service.MappingService;
 import org.gepnic.doors.masterapi.service.TemplateService;
@@ -17,6 +19,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.Authentication;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -36,6 +39,8 @@ public class TemplateController {
     private final MappingService mappingService;
     private final AgentExecutionService agentExecutionService;
     private final DataPullRequestRepository dataPullRequestRepository;
+    private final ClientQueryMapRepository clientQueryMapRepository;
+    private final AgentRepository agentRepository;
 
     /**
      * 1. SUBMIT NEW PROPOSAL
@@ -43,7 +48,48 @@ public class TemplateController {
      */
     @Transactional
   @PostMapping("/submit")
-public ResponseEntity<ApiResponse<Object>> submitTemplate(@RequestBody SqlTemplate template) {
+public ResponseEntity<ApiResponse<Object>> submitTemplate(
+        @RequestBody SqlTemplate template,
+        Authentication authentication) {
+    if (authentication == null || !authentication.isAuthenticated()) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error("Authentication required", HttpStatus.UNAUTHORIZED.value()));
+    }
+
+    // Portal identity is authoritative; never trust a browser-supplied proposer ID.
+    template.setProposerId(authentication.getName());
+    template.setDefaultAgentId(normalizeOptionalText(template.getDefaultAgentId()));
+    template.setCategory(normalizeOptionalText(template.getCategory()));
+    template.setSubcategory(normalizeOptionalText(template.getSubcategory()));
+    template.setDescription(normalizeOptionalText(template.getDescription()));
+    boolean developer = hasAuthority(authentication, "DEVELOPER", "ROLE_DEVELOPER");
+    if (developer) {
+        if (!"REQUEST".equalsIgnoreCase(template.getSubmissionSource())
+                || template.getRequestId() == null) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(
+                    "Developers may submit SQL only for an approved data request.",
+                    HttpStatus.FORBIDDEN.value()));
+        }
+        Integer approvedRequestCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM data_pull_requests WHERE request_id = ? AND UPPER(status) = 'APPROVED'",
+                Integer.class,
+                template.getRequestId());
+        if (approvedRequestCount == null || approvedRequestCount == 0) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(
+                    "The linked data request is not approved.",
+                    HttpStatus.FORBIDDEN.value()));
+        }
+    }
+    String submittedUniqueName = normalizeOptionalText(template.getUniqueName());
+    if (submittedUniqueName == null || !submittedUniqueName.matches("[A-Za-z0-9][A-Za-z0-9 _-]{2,99}")) {
+        return ResponseEntity.badRequest().body(ApiResponse.error(
+                "Query Name must be 3-100 characters and contain only letters, numbers, spaces, hyphens or underscores.", 400));
+    }
+    if (sqlTemplateRepository.existsByUniqueNameIgnoreCase(submittedUniqueName)) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(
+                "Query Name already exists. Enter a unique name.", HttpStatus.CONFLICT.value()));
+    }
+    template.setUniqueName(submittedUniqueName);
     try {
         // 🛡️ 1. DECRYPT: Turn the incoming AES gibberish back into a SQL string
         String encryptedSql = template.getSqlText();
@@ -87,8 +133,16 @@ public ResponseEntity<ApiResponse<Object>> submitTemplate(@RequestBody SqlTempla
 
     @GetMapping("/list/my-submissions")
 public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(
-        @RequestParam String userId,
-        @RequestParam(required = false) String role) {
+        @RequestParam(required = false) String userId,
+        @RequestParam(required = false) String role,
+        Authentication authentication) {
+
+    // Compatibility parameters are intentionally ignored. Identity and role
+    // come only from the authenticated session.
+    userId = authentication.getName();
+    boolean manager = hasAuthority(authentication,
+            "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN");
+    role = manager ? "DataManager" : "Developer";
     
     log.info("DOORS-MASTER: Fetching SQL submissions for: {} (Role: {})", userId, role);
     try {
@@ -168,12 +222,53 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
             String newStatus = (String) payload.get("status");
             String editedSql = (String) payload.get("sqlText");
 
+            if (payload.containsKey("uniqueName")) {
+                String requestedUniqueName = normalizeOptionalText(payload.get("uniqueName"));
+                if (requestedUniqueName == null) {
+                    return ResponseEntity.badRequest().body(ApiResponse.error("Query Name is required.", 400));
+                }
+                if (!requestedUniqueName.equals(template.getUniqueName())) {
+                    if (!requestedUniqueName.matches("[A-Za-z0-9][A-Za-z0-9 _-]{2,99}")) {
+                        return ResponseEntity.badRequest().body(ApiResponse.error(
+                                "New Query Name must be 3-100 characters and contain only letters, numbers, spaces, hyphens or underscores.", 400));
+                    }
+                    if (clientQueryMapRepository.existsByQueryId(id)) {
+                        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(
+                                "Query Name cannot be changed because this query is mapped to one or more API clients.", 409));
+                    }
+                    if (sqlTemplateRepository.existsByUniqueNameIgnoreCaseAndQueryIdNot(requestedUniqueName, id)) {
+                        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(
+                                "Query Name already exists. Enter a unique name.", 409));
+                    }
+                    String previousUniqueName = template.getUniqueName();
+                    template.setUniqueName(requestedUniqueName);
+                    log.warn("DOORS-GOVERNANCE: Query Name renamed for Q-{} from [{}] to [{}] after API-client mapping check.",
+                            id, previousUniqueName, requestedUniqueName);
+                }
+            }
+
             if (editedSql != null && !SqlSecurityValidator.isSafeSelectOnly(editedSql)) {
                 return ResponseEntity.status(403).body(ApiResponse.error("Security Violation", 403));
             }
 
             template.setSqlText(editedSql != null ? editedSql : template.getSqlText());
             template.setStatus(newStatus);
+
+            // Report Catalogue metadata is edited from the Query Library after
+            // approval. Only overwrite a field when the request contains it so
+            // ordinary status-only transitions preserve existing metadata.
+            if (payload.containsKey("description")) {
+                template.setDescription(normalizeOptionalText(payload.get("description")));
+            }
+            if (payload.containsKey("category")) {
+                template.setCategory(normalizeOptionalText(payload.get("category")));
+            }
+            if (payload.containsKey("subcategory")) {
+                template.setSubcategory(normalizeOptionalText(payload.get("subcategory")));
+            }
+            if (payload.containsKey("defaultAgentId")) {
+                template.setDefaultAgentId(normalizeOptionalText(payload.get("defaultAgentId")));
+            }
             template.setUpdatedAt(LocalDateTime.now());
 
             if ("APPROVED".equals(newStatus)) {
@@ -189,6 +284,42 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
             SqlTemplate updated = sqlTemplateRepository.save(template);
             return ResponseEntity.ok(ApiResponse.success((Object)updated, "Status: " + newStatus));
         }).orElse(ResponseEntity.status(404).body(ApiResponse.error("Not found", 404)));
+    }
+
+    private static String normalizeOptionalText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = String.valueOf(value).trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private static boolean hasAuthority(Authentication authentication, String... acceptedAuthorities) {
+        if (authentication == null) {
+            return false;
+        }
+        java.util.Set<String> accepted = java.util.Arrays.stream(acceptedAuthorities)
+                .map(value -> value.toUpperCase(java.util.Locale.ROOT))
+                .collect(java.util.stream.Collectors.toSet());
+        return authentication.getAuthorities().stream()
+                .map(authority -> authority.getAuthority().toUpperCase(java.util.Locale.ROOT))
+                .anyMatch(accepted::contains);
+    }
+
+    @GetMapping("/{id}/rename-eligibility")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getRenameEligibility(@PathVariable Long id) {
+        return sqlTemplateRepository.findById(id).map(template -> {
+            boolean mappedToApiClient = clientQueryMapRepository.existsByQueryId(id);
+            Map<String, Object> eligibility = new HashMap<>();
+            eligibility.put("eligible", !mappedToApiClient);
+            eligibility.put("mappedToApiClient", mappedToApiClient);
+            eligibility.put("currentUniqueName", template.getUniqueName());
+            eligibility.put("reason", mappedToApiClient
+                    ? "This query is mapped to an API client. Remove all API-client mappings before renaming."
+                    : "No API-client mapping exists. Query Name may be changed.");
+            return ResponseEntity.ok(ApiResponse.success(eligibility, "Rename eligibility evaluated"));
+        }).orElse(ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("Query not found", HttpStatus.NOT_FOUND.value())));
     }
 
     @GetMapping("/by-request/{requestId}")
@@ -227,8 +358,57 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
         }
     }
     @GetMapping("/list")
-    public ResponseEntity<ApiResponse<List<SqlTemplate>>> listTemplates(@RequestParam String status) {
-        return ResponseEntity.ok(ApiResponse.success(sqlTemplateRepository.findByStatus(status), "Retrieved"));
+    public ResponseEntity<ApiResponse<Map<String, Object>>> listTemplates(
+            @RequestParam String status,
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader) {
+        try {
+            String hybridKey = buildResponseHybridKey(authorizationHeader);
+            List<SqlTemplate> templates = sqlTemplateRepository.findByStatus(status);
+            String serializedTemplates = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .findAndRegisterModules()
+                    .writeValueAsString(templates);
+
+            Map<String, Object> encryptedEnvelope = new HashMap<>();
+            encryptedEnvelope.put("isEncryptedPayload", true);
+            encryptedEnvelope.put(
+                    "secureData",
+                    EncryptionUtils.encrypt(serializedTemplates, hybridKey)
+            );
+            encryptedEnvelope.put("rowCount", templates.size());
+
+            return ResponseEntity.ok(ApiResponse.success(
+                    encryptedEnvelope,
+                    "Retrieved securely"
+            ));
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ApiResponse.error(
+                            exception.getMessage(),
+                            HttpStatus.UNAUTHORIZED.value()
+                    )
+            );
+        } catch (Exception exception) {
+            log.error("Unable to encrypt SQL template list", exception);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                    ApiResponse.error(
+                            "Unable to secure the SQL template response",
+                            HttpStatus.INTERNAL_SERVER_ERROR.value()
+                    )
+            );
+        }
+    }
+
+    private String buildResponseHybridKey(String authorizationHeader) {
+        if (authorizationHeader == null || authorizationHeader.isBlank()) {
+            throw new IllegalArgumentException("Authorization token is required");
+        }
+        String rawJwt = authorizationHeader
+                .replaceFirst("(?i)^Bearer\\s+", "")
+                .trim();
+        if (rawJwt.length() < 8) {
+            throw new IllegalArgumentException("Authorization token is invalid");
+        }
+        return "D00RS-NI" + rawJwt.substring(rawJwt.length() - 8);
     }
 
     @GetMapping("/summary-counts")
@@ -263,67 +443,454 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getActiveAgents() 
         return ResponseEntity.status(500).body(ApiResponse.error("Registry lookup failed", 500));
     }
 }
- 
  @PostMapping("/test-dry-run")
-public ResponseEntity<ApiResponse<Object>> testQuery(@RequestBody Map<String, Object> payload) {
-    // 1. Extract fields with standard DOORS naming conventions
-    String agentId = (String) payload.get("agentId");
-    
-    // 🛡️ FIX: Check for 'base64Sql' first, fallback to 'sqlText' to prevent null 'src'
-    String base64Payload = (String) payload.get("base64Sql");
-    if (base64Payload == null) {
-        base64Payload = (String) payload.get("sqlText");
-    }
-    
-    @SuppressWarnings("unchecked")
-    Map<String, Object> params = (Map<String, Object>) payload.get("params");
-
+public ResponseEntity<ApiResponse<Object>> testQuery(
+        @RequestHeader(
+                value = "Authorization",
+                required = false
+        ) String authorizationHeader,
+        @RequestBody Map<String, Object> payload,
+        Authentication authentication
+) {
     try {
-        // 2. Validate Agent Selection
-        if (agentId == null || agentId.isEmpty()) {
-            return ResponseEntity.status(400)
-                    .body(ApiResponse.error("Please select a target Agent node", 400));
+        // ---------------------------------------------------------------------
+        // 1. Validate Authorization header and derive hybrid AES key
+        // ---------------------------------------------------------------------
+
+        if (authorizationHeader == null ||
+                authorizationHeader.isBlank()) {
+
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.error(
+                            "Authorization token is missing",
+                            HttpStatus.UNAUTHORIZED.value()
+                    ));
         }
 
-        // 3. EXECUTE (The service now handles the Base64 decoding & scrubbing internally)
-        Map<String, Object> result = agentExecutionService.executeDryRun(agentId, base64Payload, params);
-
-        // 4. SUCCESS RESPONSE
-        if (result == null || result.isEmpty()) {
-            return ResponseEntity.ok(ApiResponse.success(new HashMap<>(), "Query successful, but returned no data."));
-        }
-        
-        return ResponseEntity.ok(ApiResponse.success((Object)result, "Dry-run completed successfully"));
-
-    } catch (IllegalArgumentException iae) {
-        // Catch the Base64/Null errors we added to the Service
-        return ResponseEntity.status(400)
-                .body(ApiResponse.error(iae.getMessage(), 400));
-                
-    } catch (SecurityException se) {
-        return ResponseEntity.status(403)
-                .body(ApiResponse.error("Security Violation: " + se.getMessage(), 403));
-
-    } catch (Exception e) {
-        String errorMsg = e.getMessage() != null ? e.getMessage() : "Unknown execution error";
-        String errorType = e.getClass().getName();
-        
-        log.error("DOORS-DRYRUN-FAILURE: Type: {}, Message: {}", errorType, errorMsg);
-
-        // 🚀 THE FIX: Catch connection-related errors and transform the message
-        if (errorType.contains("Connect") || 
-            errorType.contains("Timeout") || 
-            errorType.contains("ResourceAccess") || 
-            errorMsg.contains("Connection refused") ||
-            errorMsg.contains("finishConnect")) {
-            
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(ApiResponse.error("Remote agent [" + agentId + "] is Offline or unreachable", 503));
+        if (!authorizationHeader.regionMatches(
+                true,
+                0,
+                "Bearer ",
+                0,
+                7
+        )) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.error(
+                            "Invalid Authorization header",
+                            HttpStatus.UNAUTHORIZED.value()
+                    ));
         }
 
-        // Fallback for SQL syntax or other processing errors
-        return ResponseEntity.status(400)
-                .body(ApiResponse.error("Execution error: " + errorMsg, 400));
+        String rawJwt = authorizationHeader
+                .substring(7)
+                .trim();
+
+        if (rawJwt.length() < 8) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.error(
+                            "Invalid authentication token",
+                            HttpStatus.UNAUTHORIZED.value()
+                    ));
+        }
+
+        /*
+         * Must exactly match PendingQueries.vue:
+         *
+         * systemPart = D00RS-NI       -> 8 bytes
+         * userPart   = JWT last 8     -> 8 bytes
+         * hybridKey                  -> 16-byte AES-128 key
+         */
+        String systemPart = "D00RS-NI";
+
+        String userPart = rawJwt.substring(
+                rawJwt.length() - 8
+        );
+
+        String hybridKey = systemPart + userPart;
+
+        if (hybridKey.getBytes(
+                java.nio.charset.StandardCharsets.UTF_8
+        ).length != 16) {
+            log.error(
+                    "DOORS-DRYRUN: Invalid hybrid-key length"
+            );
+
+            return ResponseEntity.status(
+                            HttpStatus.INTERNAL_SERVER_ERROR
+                    )
+                    .body(ApiResponse.error(
+                            "Unable to construct the encryption key",
+                            HttpStatus.INTERNAL_SERVER_ERROR.value()
+                    ));
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. Extract and validate request fields
+        // ---------------------------------------------------------------------
+
+        Object agentIdValue = payload.get("agentId");
+        Object encryptedSqlValue = payload.get("encryptedSql");
+
+        if (!(agentIdValue instanceof String) ||
+                ((String) agentIdValue).isBlank()) {
+
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(
+                            "Please select a target Agent node",
+                            HttpStatus.BAD_REQUEST.value()
+                    ));
+        }
+
+        if (!(encryptedSqlValue instanceof String) ||
+                ((String) encryptedSqlValue).isBlank()) {
+
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(
+                            "Encrypted SQL payload cannot be empty",
+                            HttpStatus.BAD_REQUEST.value()
+                    ));
+        }
+
+        String agentId =
+                ((String) agentIdValue).trim();
+
+        boolean developer = authentication != null
+                && authentication.getAuthorities().stream()
+                .map(authority -> authority.getAuthority().toUpperCase(java.util.Locale.ROOT))
+                .anyMatch(authority -> authority.equals("DEVELOPER")
+                        || authority.equals("ROLE_DEVELOPER"));
+        if (developer) {
+            boolean activeSandbox = agentRepository.findById(agentId)
+                    .filter(agent -> Boolean.TRUE.equals(agent.getIsActive()))
+                    .filter(agent -> Boolean.TRUE.equals(agent.getIsSandbox()))
+                    .isPresent();
+            if (!activeSandbox) {
+                log.warn("DOORS-SECURITY: Developer [{}] attempted dry-run on non-sandbox agent [{}]",
+                        authentication.getName(), agentId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(ApiResponse.error(
+                                "Developers may execute dry-runs only on active Sandbox agents",
+                                HttpStatus.FORBIDDEN.value()));
+            }
+        }
+
+        String encryptedSql =
+                ((String) encryptedSqlValue).trim();
+
+        Map<String, Object> params = new HashMap<>();
+
+        Object paramsValue = payload.get("params");
+
+        if (paramsValue instanceof Map<?, ?> suppliedParams) {
+            for (Map.Entry<?, ?> entry :
+                    suppliedParams.entrySet()) {
+
+                if (entry.getKey() != null) {
+                    params.put(
+                            String.valueOf(entry.getKey()),
+                            entry.getValue()
+                    );
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 3. Decrypt SQL using the hybrid key
+        // ---------------------------------------------------------------------
+
+        final String processedSql;
+
+        try {
+            processedSql = EncryptionUtils.decrypt(
+                    encryptedSql,
+                    hybridKey
+            ).trim();
+        } catch (Exception decryptionException) {
+            /*
+             * Do not fall back to treating encryptedSql as plaintext.
+             * A decryption failure must stop the request.
+             */
+            log.warn(
+                    "DOORS-DRYRUN: SQL decryption failed for agent {}: {}",
+                    agentId,
+                    decryptionException.getMessage()
+            );
+
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(
+                            "Unable to decrypt the SQL payload. " +
+                                    "The UI and backend encryption keys " +
+                                    "may not match.",
+                            HttpStatus.BAD_REQUEST.value()
+                    ));
+        }
+
+        if (processedSql.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(
+                            "Decrypted SQL query is empty",
+                            HttpStatus.BAD_REQUEST.value()
+                    ));
+        }
+
+        // ---------------------------------------------------------------------
+        // 4. Reject invalid control characters
+        // ---------------------------------------------------------------------
+
+        for (int index = 0;
+             index < processedSql.length();
+             index++) {
+
+            char character =
+                    processedSql.charAt(index);
+
+            if (Character.isISOControl(character) &&
+                    character != '\n' &&
+                    character != '\r' &&
+                    character != '\t') {
+
+                log.warn(
+                        "DOORS-DRYRUN: Invalid control character " +
+                                "detected in decrypted SQL"
+                );
+
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error(
+                                "Decrypted SQL contains invalid characters",
+                                HttpStatus.BAD_REQUEST.value()
+                        ));
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 5. Validate SELECT-only SQL
+        // ---------------------------------------------------------------------
+
+        if (!SqlSecurityValidator.isSafeSelectOnly(
+                processedSql
+        )) {
+            log.warn(
+                    "DOORS-SECURITY: Rejected unsafe dry-run SQL " +
+                            "for agent {}",
+                    agentId
+            );
+
+            throw new SecurityException(
+                    "Only read-only SELECT queries " +
+                            "are authorized for execution"
+            );
+        }
+
+        log.info(
+                "DOORS-DRYRUN: Executing validated SQL on agent {}",
+                agentId
+        );
+
+        // ---------------------------------------------------------------------
+        // 6. Execute plaintext SQL through the trusted backend service
+        // ---------------------------------------------------------------------
+
+        Map<String, Object> executionResult =
+                agentExecutionService.executeDryRun(
+                        agentId,
+                        processedSql,
+                        params
+                );
+
+        if (executionResult == null) {
+            executionResult = new HashMap<>();
+        }
+
+        // ---------------------------------------------------------------------
+        // 7. Extract only the result data grid
+        // ---------------------------------------------------------------------
+
+        Object targetDataGrid;
+
+        if (executionResult.containsKey("data")) {
+            Object primaryData =
+                    executionResult.get("data");
+
+            if (primaryData instanceof Map<?, ?> primaryMap &&
+                    primaryMap.containsKey("data")) {
+
+                targetDataGrid =
+                        primaryMap.get("data");
+            } else {
+                targetDataGrid = primaryData;
+            }
+        } else {
+            /*
+             * Preserve a valid empty result instead of returning
+             * an unencrypted response.
+             */
+            targetDataGrid = executionResult;
+        }
+
+        if (targetDataGrid == null) {
+            targetDataGrid =
+                    java.util.Collections.emptyList();
+        }
+
+        // ---------------------------------------------------------------------
+        // 8. Serialize and encrypt response with the same hybrid key
+        // ---------------------------------------------------------------------
+
+        String serializedResult;
+
+        try {
+            serializedResult =
+                    new com.fasterxml.jackson.databind.ObjectMapper()
+                            .writeValueAsString(
+                                    targetDataGrid
+                            );
+        } catch (Exception serializationException) {
+            log.error(
+                    "DOORS-DRYRUN: Result serialization failed",
+                    serializationException
+            );
+
+            return ResponseEntity.status(
+                            HttpStatus.INTERNAL_SERVER_ERROR
+                    )
+                    .body(ApiResponse.error(
+                            "Failed to serialize the dry-run result",
+                            HttpStatus.INTERNAL_SERVER_ERROR.value()
+                    ));
+        }
+
+        final String securedCiphertext;
+
+        try {
+            securedCiphertext =
+                    EncryptionUtils.encrypt(
+                            serializedResult,
+                            hybridKey
+                    );
+        } catch (Exception encryptionException) {
+            log.error(
+                    "DOORS-DRYRUN: Response encryption failed",
+                    encryptionException
+            );
+
+            return ResponseEntity.status(
+                            HttpStatus.INTERNAL_SERVER_ERROR
+                    )
+                    .body(ApiResponse.error(
+                            "Failed to encrypt the dry-run result",
+                            HttpStatus.INTERNAL_SERVER_ERROR.value()
+                    ));
+        }
+
+        // ---------------------------------------------------------------------
+        // 9. Build encrypted response envelope
+        // ---------------------------------------------------------------------
+
+        Map<String, Object> secureEnvelope =
+                new HashMap<>();
+
+        secureEnvelope.put(
+                "isEncryptedPayload",
+                true
+        );
+
+        secureEnvelope.put(
+                "secureData",
+                securedCiphertext
+        );
+
+        /*
+         * rowCount is metadata only. The actual result rows remain
+         * encrypted inside secureData.
+         */
+        if (executionResult.containsKey("rowCount")) {
+            secureEnvelope.put(
+                    "rowCount",
+                    executionResult.get("rowCount")
+            );
+        }
+
+        log.info(
+                "DOORS-DRYRUN: Secure dry-run completed on agent {}",
+                agentId
+        );
+
+        return ResponseEntity.ok(
+                ApiResponse.success(
+                        (Object) secureEnvelope,
+                        "Dry-run completed successfully"
+                )
+        );
+
+    } catch (SecurityException securityException) {
+        log.warn(
+                "DOORS-SECURITY: Dry-run rejected: {}",
+                securityException.getMessage()
+        );
+
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(
+                        "Security Violation: " +
+                                securityException.getMessage(),
+                        HttpStatus.FORBIDDEN.value()
+                ));
+
+    } catch (
+            org.springframework.jdbc.BadSqlGrammarException
+                    sqlException
+    ) {
+        log.warn(
+                "DOORS-DRYRUN: SQL syntax error: {}",
+                sqlException.getMostSpecificCause()
+                        .getMessage()
+        );
+
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error(
+                        "SQL Syntax Error: " +
+                                sqlException
+                                        .getMostSpecificCause()
+                                        .getMessage(),
+                        HttpStatus.BAD_REQUEST.value()
+                ));
+
+    } catch (IllegalStateException executionException) {
+        log.warn(
+                "DOORS-DRYRUN: Agent execution failed: {}",
+                executionException.getMessage()
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiResponse.error(
+                        executionException.getMessage(),
+                        HttpStatus.BAD_GATEWAY.value()
+                ));
+
+    } catch (IllegalArgumentException argumentException) {
+        log.warn(
+                "DOORS-DRYRUN: Invalid request: {}",
+                argumentException.getMessage()
+        );
+
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error(
+                        argumentException.getMessage(),
+                        HttpStatus.BAD_REQUEST.value()
+                ));
+
+    } catch (Exception exception) {
+        log.error(
+                "DOORS-DRYRUN: Unexpected execution failure",
+                exception
+        );
+
+        return ResponseEntity.status(
+                        HttpStatus.INTERNAL_SERVER_ERROR
+                )
+                .body(ApiResponse.error(
+                        "Dry-run execution failed",
+                        HttpStatus.INTERNAL_SERVER_ERROR.value()
+                ));
     }
 }
 }

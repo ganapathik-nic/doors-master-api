@@ -1,3 +1,31 @@
+/**
+ * ========================================================================================
+ * 🛡️ NATIONAL INFORMATICS CENTRE (NIC) — GePNIC - Data Orchestration API Client 
+ * 📑 STANDARD OPERATING PROCEDURE (SOP) FOR CRYPTOGRAPHIC ASSET MANAGEMENT
+ * Disclaimer: This generated client template is provided as a reference implementation
+ * to demonstrate secure integration practices with the DOORS API. It is the
+ * responsibility of the implementer to ensure that all cryptographic materials 
+ * are managed in accordance with organizational security policies and industry 
+ * best practices.
+ * ========================================================================================
+ * * 1. IDENTITY & CONFIGURATION SUMMARY
+ * - Client Class: GePNICDOORSAPIClientDevProfileGePNICInternal
+ * - Profile Mode: DEVELOPMENT PROFILE (Ephemeral In-Memory)
+ * - Security Model: Digital Certificate Handshake with Outbound Data Payload Encryption
+ * * 2. KEY STORAGE MANDATE & CRITERIA (PRODUCTION RUNTIME)
+ * - Ephemeral RSA generation is active. No local file footprint is required on disk for testing.
+ * - Move to Production Profile before distributing integration assets to state data center environments.
+ * - Ensure whitelisted network IPs align with the active local terminal boundaries.
+ * * 3. KEY ROTATION & CHANGING DEFAULT STORAGE PATHS
+ * - Default Test Path Location: System.getProperty("user.home") + "/security/doors-identity.p12"
+ * - Custom Environment Variables Injection: To override hardcoded configuration schemas, modify your application instantiation
+ * to inject configuration parameters natively from host environment variables:
+ * e.g., String activeWalletPath = System.getenv("DOORS_WALLET_PATH");
+ * String activeWalletPass = System.getenv("DOORS_WALLET_PASS");
+ * String activeWalletAlias = System.getenv("DOORS_WALLET_ALIAS");
+ * * And Change 'client.loadPermanentIdentity' in this code as -> client.loadPermanentIdentity(activeWalletPath, System.getenv("DOORS_WALLET_PASS"), System.getenv("DOORS_WALLET_ALIAS"));
+ * * ====================================================================================
+ */
 package org.gepnic.doors.masterapi;
 
 import javax.crypto.Cipher;
@@ -13,17 +41,12 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.PublicKey;
-import java.security.SecureRandom;
 import java.security.spec.RSAPublicKeySpec;
 import java.util.Base64;
+import java.util.List;
 
-/**
- * 🚀 PRODUCTION CONSUMER PIPELINE CLIENT SDK
- * Generated dynamically for: GePNICDOORSAPIClientGePNICInternal
- */
-public class GePNICDOORSAPIClientGePNICInternal {
+public class GePNICDOORSAPIClientDevProfileGePNICInternal {
 
     private final String baseUrl;
     private final String apiKey;
@@ -33,15 +56,15 @@ public class GePNICDOORSAPIClientGePNICInternal {
     private PublicKey cachedDoorsPublicKey = null;
     private String cachedDoorsKeyId = null;
 
-    public GePNICDOORSAPIClientGePNICInternal(String baseUrl, String apiKey) throws Exception {
+    public GePNICDOORSAPIClientDevProfileGePNICInternal(String baseUrl, String apiKey) throws Exception {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.apiKey = apiKey;
         generateVolatileKeyPair();
     }
 
     private void generateVolatileKeyPair() throws Exception {
-        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
-        keyGen.initialize(2048, new SecureRandom());
+        java.security.KeyPairGenerator keyGen = java.security.KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048, new java.security.SecureRandom());
         this.liveKeyPair = keyGen.generateKeyPair();
         this.publicKeyBase64 = Base64.getEncoder().encodeToString(this.liveKeyPair.getPublic().getEncoded());
     }
@@ -85,7 +108,7 @@ public class GePNICDOORSAPIClientGePNICInternal {
         return this.cachedDoorsPublicKey;
     }
 
-    public String fetchReportData(String queryUniqueName, String jsonRequestPayload) throws Exception {
+    public String fetchReportData(String queryUniqueName, List<String> targetAgentIds, String criteriaParams) throws Exception {
         String encodedQuery = URLEncoder.encode(queryUniqueName, StandardCharsets.UTF_8.toString()).replaceAll("\\+", "%20");
         HttpURLConnection conn = (HttpURLConnection) new URL(this.baseUrl + "/orchestrate/" + encodedQuery).openConnection();
         conn.setRequestMethod("POST");
@@ -93,13 +116,25 @@ public class GePNICDOORSAPIClientGePNICInternal {
         conn.setRequestProperty("X-API-KEY", this.apiKey);
         conn.setDoOutput(true);
 
+        StringBuilder agentsJson = new StringBuilder();
+        agentsJson.append("[");
+        for (int i = 0; i < targetAgentIds.size(); i++) {
+            agentsJson.append("\"").append(targetAgentIds.get(i).trim()).append("\"");
+            if (i < targetAgentIds.size() - 1) {
+                agentsJson.append(",");
+            }
+        }
+        agentsJson.append("]");
+
+        String cleanParams = (criteriaParams == null || criteriaParams.trim().isEmpty()) ? "{}" : criteriaParams.trim();
+        String jsonRequestPayload = "{\"agentIds\":" + agentsJson.toString() + ",\"params\":" + cleanParams + "}";
+
         try (OutputStream os = conn.getOutputStream()) { os.write(jsonRequestPayload.getBytes(StandardCharsets.UTF_8)); }
 
         int status = conn.getResponseCode();
-
         if (status == 403) {
             executeHandshake();
-            return fetchReportData(queryUniqueName, jsonRequestPayload);
+            return fetchReportData(queryUniqueName, targetAgentIds, criteriaParams);
         }
 
         if (status >= 400) {
@@ -115,6 +150,15 @@ public class GePNICDOORSAPIClientGePNICInternal {
         String signatureBase64 = extractJsonValue(response, "signature");
 
         if (secureDataBase64 == null) return response;
+
+        // 🛰️ MODULE 1: INBOUND WIRE DATA VERIFICATION PANEL
+        System.out.println("\n================================================================");
+        System.out.println("🛰️  INBOUND WIRE DATA VERIFICATION (RAW ENCRYPTED BLOCKS)");
+        System.out.println("================================================================");
+        System.out.println("🔒 Encrypted Session AES Key : " + truncateSignatureString(encryptedKeyBase64));
+        System.out.println("🔢 Initialization Vector (IV): " + ivBase64);
+        System.out.println("📦 Ciphertext Payload Body   : " + truncateSignatureString(secureDataBase64));
+        System.out.println("================================================================");
 
         Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
         rsaCipher.init(Cipher.DECRYPT_MODE, this.liveKeyPair.getPrivate());
@@ -137,7 +181,21 @@ public class GePNICDOORSAPIClientGePNICInternal {
             throw new java.security.SignatureException("💥 CRYPTOGRAPHIC FAULT: Signature verification mismatch.");
         }
 
+        // 🛡️ MODULE 2: DIGITAL SIGNATURE AUDIT TRAIL PANEL
+        System.out.println("\n----------------------------------------------------------------");
+        System.out.println("🛡️  DOORS PKI EMBEDDED DIGITAL SIGNATURE VERIFIED");
+        System.out.println("📦 Key Identifier Hint (KID)  : " + (serverKeyIdHint != null ? serverKeyIdHint : "UNKNOWN"));
+        System.out.println("🔑 Verification Engine State  : SHA256withRSA (Algorithm Validated)");
+        System.out.println("✍️  Trunk Payload Signature    : " + truncateSignatureString(signatureBase64));
+        System.out.println("----------------------------------------------------------------\n");
+
         return decryptedReportJson;
+    }
+
+    // 🚀 CLEAN TRUNCATION HELPER FOR LOG ALIGNMENT
+    private static String truncateSignatureString(String sig) {
+        if (sig == null || sig.length() <= 32) return sig;
+        return sig.substring(0, 16) + "..." + sig.substring(sig.length() - 16);
     }
 
     private static String readStream(java.io.InputStream is) throws Exception {
@@ -168,15 +226,31 @@ public class GePNICDOORSAPIClientGePNICInternal {
         try {
             String configUrl = "http://localhost:8052/api/v1/master/gateway";
             String configKey = "obxXlht2wcZF9FDAG6i4EGxlyFMAXmxZ";
-            String reportName = "Bidders List";
-            String queryJsonBody = "{\"agentIds\":[\"Dev-01\"],\"params\":{}}";
-
-            System.out.println("====== RUNNING GENERATED DOORS INTEGRATION CLIENT ======");
-            GePNICDOORSAPIClientGePNICInternal client = new GePNICDOORSAPIClientGePNICInternal(configUrl, configKey);
-            client.executeHandshake();
             
-            String outputJson = client.fetchReportData(reportName, queryJsonBody);
-            System.out.println("🎉 INTEGRITY CONTROL CHECK RESOLVED SUCCESSFUL:\n" + outputJson);
+            List<String> assignedAgents = java.util.Arrays.asList("GePNIC-Assam");
+
+            System.out.println("====== RUNNING GENERATED DOORS DEVELOPMENT CLIENT ======");
+            GePNICDOORSAPIClientDevProfileGePNICInternal client = new GePNICDOORSAPIClientDevProfileGePNICInternal(configUrl, configKey);
+            client.executeHandshake();
+
+            // Execution context for template: Bidders List
+            System.out.println("\n🛰️ Orchestrating dataset query: Bidders List...");
+            java.util.Map<String, String> map_Bidders_List = new java.util.HashMap<>();
+            StringBuilder jsonBuilder_Bidders_List = new StringBuilder("{");
+            int count_Bidders_List = 0;
+            for (java.util.Map.Entry<String, String> entry : map_Bidders_List.entrySet()) {
+                jsonBuilder_Bidders_List.append("\"").append(entry.getKey()).append("\":\"").append(entry.getValue()).append("\"");
+                if (++count_Bidders_List < map_Bidders_List.size()) {
+                    jsonBuilder_Bidders_List.append(",");
+                }
+            }
+            jsonBuilder_Bidders_List.append("}");
+            String params_Bidders_List = jsonBuilder_Bidders_List.toString();
+
+            String output_Bidders_List = client.fetchReportData("Bidders List", assignedAgents, params_Bidders_List);
+            System.out.println("🎉 Response Resolved Successfully -> \n" + output_Bidders_List);
+      
+            System.out.println("\n====== 🏁 ALL CONTEXTUAL DATA ORCHESTRATIONS PASSED PERFECTLY ======");
         } catch (Exception ex) {
             ex.printStackTrace();
         }

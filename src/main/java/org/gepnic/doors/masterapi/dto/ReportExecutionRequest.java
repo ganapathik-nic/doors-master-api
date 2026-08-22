@@ -27,4 +27,8 @@ public class ReportExecutionRequest implements Serializable {
     private String performedBy;     // User or Client System Name
 
     private Map<String, Object> params; // SQL parameters map
+
+    private Integer page;
+
+    private Integer pageSize;
 }

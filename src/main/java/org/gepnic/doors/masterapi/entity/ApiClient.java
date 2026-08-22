@@ -3,10 +3,9 @@ package org.gepnic.doors.masterapi.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
-import java.util.Arrays;      // 🚀 FIXED: Standard Java Util
-import java.util.Collections; // 🚀 FIXED: Standard Java Util
+import java.util.Arrays;      
+import java.util.Collections; 
 import java.util.List;
-import java.util.ArrayList;
 
 @Data
 @Entity
@@ -41,18 +40,38 @@ public class ApiClient {
     @Column(name = "last_used_at")
     private LocalDateTime lastUsedAt;
 
+    @Column(name = "is_encryption_enabled")
+    private boolean isEncryptionEnabled = true;
+
+    @Column(name = "client_public_key", columnDefinition = "TEXT")
+    private String clientPublicKey;
+
     /**
      * Virtual field for the Frontend. 
      * Converts the DB String "1.1.1.1, 2.2.2.2" into a List for Vue Tags.
      */
-    @Transient // 🚀 Tells JPA: "This is not a database column"
+    @Transient 
     public List<String> getIpWhitelist() {
         if (this.allowedIps == null || this.allowedIps.isBlank()) {
             return Collections.emptyList();
         }
         return Arrays.asList(this.allowedIps.split("\\s*,\\s*"));
     }
-    // 🚀 THE MISSING BINDING FIELD
-    @Column(name = "is_encryption_enabled")
-    private boolean isEncryptionEnabled = true;
+
+    public void setIpWhitelist(List<String> ips) {
+        if (ips == null || ips.isEmpty()) {
+            this.allowedIps = null;
+        } else {
+            this.allowedIps = String.join(",", ips);
+        }
+    }
+
+    // 🚀 Manual Explicit Mappings to ensure perfect compilation bindings
+    public String getClientPublicKey() {
+        return this.clientPublicKey;
+    }
+
+    public void setClientPublicKey(String clientPublicKey) {
+        this.clientPublicKey = clientPublicKey;
+    }
 }

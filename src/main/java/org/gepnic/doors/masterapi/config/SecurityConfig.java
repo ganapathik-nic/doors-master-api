@@ -17,6 +17,10 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.InvalidCsrfTokenException;
+import org.springframework.security.web.csrf.MissingCsrfTokenException;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -30,6 +34,8 @@ import java.util.Collections;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
+    private final SwaggerSessionAuthenticationFilter swaggerSessionAuthFilter;
+    private final ManagerPlaneFilter managerPlaneFilter;
     private final ApiClientRepository apiClientRepository;
 
     @Value("${doors.security.allowed-origins:http://localhost:5173}")
@@ -39,11 +45,11 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         
-        // 🚀 HOT-SWAP ATTACHMENT: No more hardcoded strings!
         configuration.setAllowedOriginPatterns(configuredAllowedOrigins); 
-        
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-API-KEY", "Accept", "Origin"));
+        configuration.setAllowedHeaders(Arrays.asList(
+                "Authorization", "Content-Type", "X-API-KEY", "X-DOORS-SWAGGER-SESSION",
+                "X-XSRF-TOKEN", "Accept", "Origin"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(Arrays.asList("X-API-KEY", "Authorization", "X-Session-Status"));
         
@@ -51,12 +57,30 @@ public class SecurityConfig {
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }    
+    
     @Bean 
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        CsrfTokenRequestAttributeHandler csrfRequestHandler =
+                new CsrfTokenRequestAttributeHandler();
+
         http
-            // 1. CORS & CSRF (CORS must be first)
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .csrf(csrf -> csrf.disable()) 
+            .csrf(csrf -> csrf
+                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRequestHandler(csrfRequestHandler)
+                .ignoringRequestMatchers(
+                    "/api/v1/auth/login",
+                    "/api/v1/auth/register",
+                    "/api/v1/auth/logout",
+                    "/api/v1/auth/mfa/verify",
+                    "/api/v1/external/execute/**",
+                    "/api/v1/master/gateway/handshake",
+                    "/api/v1/master/gateway/orchestrate/**",
+                    "/api/v1/master/gateway/telemetry/**",
+                    "/api/v1/master/gateway/swagger-sessions/exchange",
+                    "/api/v1/master/reports/orchestrate/**"
+                )
+            )
             
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) 
             
@@ -67,60 +91,222 @@ public class SecurityConfig {
                     response.setContentType("application/json");
                     response.getWriter().write("{\"error\": \"Unauthorized\", \"message\": \"Authentication required\"}");
                 })
+                .accessDeniedHandler((request, response, denied) -> {
+                    boolean csrfFailure = denied instanceof MissingCsrfTokenException
+                            || denied instanceof InvalidCsrfTokenException;
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json");
+                    if (csrfFailure) {
+                        response.getWriter().write(
+                            "{\"code\":\"DOORS-CSRF-INVALID\",\"message\":\"Security token expired. Retrying request.\"}"
+                        );
+                    } else {
+                        response.getWriter().write(
+                            "{\"code\":\"DOORS-AUTH-ACCESS-DENIED\",\"message\":\"Access denied\"}"
+                        );
+                    }
+                })
             )
             .authorizeHttpRequests(auth -> auth
-                // 2. PUBLIC & OPTIONS Whitelists
+                // 1. PUBLIC & OPTIONS Whitelists
                 .requestMatchers("/api/v1/master/gateway/.well-known/jwks.json").permitAll()
+                .requestMatchers("/api/v1/master/gateway/api-clients/parse-certificate").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
                 .requestMatchers("/auth/bootstrap-hash").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/v1/auth/**", "/error", "/api/auth/captcha").permitAll() 
-                .requestMatchers("/api/v1/master/aira/**").permitAll()
+                .requestMatchers(
+                    "/api/v1/auth/login",
+                    "/api/v1/auth/register",
+                    "/api/v1/auth/captcha",
+                    "/api/v1/auth/csrf",
+                    "/api/v1/auth/mfa/verify",
+                    "/api/v1/auth/logout",
+                    "/api/auth/captcha",
+                    "/error"
+                ).permitAll()
+                .requestMatchers(
+                    "/api/v1/auth/me",
+                    "/api/v1/auth/change-password"
+                ).authenticated()
+                .requestMatchers("/api/v1/auth/list/active").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                .requestMatchers("/api/v1/master/aira/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER",
+                    "ADMIN", "ROLE_ADMIN"
+                )
                 .requestMatchers("/api/v1/master/reports/orchestrate/**").permitAll()
                 .requestMatchers("/api/v1/master/gateway/orchestrate/**").permitAll()
+                .requestMatchers("/api/v1/master/gateway/telemetry/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/handshake")
+                    .hasAuthority("ROLE_API_CLIENT")
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/swagger-sessions/exchange").permitAll()
 
-                // ====================================================================
-                // 🚀 FIXED PKI SECURITY MATCHERS RAILS: Unified with your normalized authorities array
-                // ====================================================================
+                .requestMatchers(
+                    "/v3/api-docs/**",
+                    "/v3/api-docs.yaml",
+                    "/swagger-resources/**",
+                    "/api/v1/master/gateway/swagger-sessions/contract/**"
+                ).hasAuthority("ROLE_SWAGGER_SESSION")
+
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/gateway/template-contracts/**")
+                .hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER",
+                    "ADMIN", "ROLE_ADMIN"
+                )
+
+                // 🚀 FULL SWAGGER UI & OPENAPI WHITELIST (Covers standard & custom prefixes)
+                .requestMatchers(
+                    "/swagger-ui/**",
+                    "/swagger-ui.html",
+                    "/swagger/doors-swagger.html",
+                    "/doors-swagger.html",
+                    "/swagger-autofill.js",
+                    "/doors-swagger-bootstrap.js",
+                    "/doors-swagger-crypto.js",
+                    "/doors-template-catalogue.js",
+                    "/vendor/**",
+                    "/webjars/**"
+                ).permitAll()
+
+                // Portal administration and governance.
                 .requestMatchers("/api/v1/master/governance/signing-keys/**").hasAnyAuthority(
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
 
-                // 3. GOVERNANCE
-                .requestMatchers("/api/v1/governance/**").hasAnyAuthority(
-                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", 
-                    "ADMIN", "ROLE_ADMIN", 
-                    "DEVELOPER", "ROLE_DEVELOPER", "ROLE_EXTERNAL", "External"
+                .requestMatchers("/api/v1/admin/users/**").hasAnyAuthority(
+                    "SecurityAdmin", "SECURITYADMIN", "ROLE_SECURITYADMIN",
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
 
-                // 4. EXTERNAL DATA PULL
-                .requestMatchers("/api/v1/external/data-pull/**").hasAnyAuthority(
-                    "External", "ROLE_EXTERNAL", 
-                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", 
-                    "ADMIN", "ROLE_ADMIN"
-                )
-
-                // 5. ADMIN PATHS
                 .requestMatchers("/api/v1/admin/**").hasAnyAuthority(
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
 
-                // 6. CATCH-ALL
-                .anyRequest().authenticated()
+                .requestMatchers(HttpMethod.GET, "/api/v1/governance/requests/*/download-evidence")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.POST, "/api/v1/governance/requests/submit")
+                    .hasAnyAuthority(
+                        "External", "EXTERNAL", "ROLE_EXTERNAL",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers("/api/v1/governance/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+
+                .requestMatchers(HttpMethod.POST, "/api/v1/external/data-pull/submit")
+                    .hasAnyAuthority(
+                        "External", "EXTERNAL", "ROLE_EXTERNAL",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.GET, "/api/v1/external/data-pull/my-list")
+                    .hasAnyAuthority(
+                        "External", "EXTERNAL", "ROLE_EXTERNAL",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers("/api/v1/external/data-pull/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                .requestMatchers("/api/v1/external/execute/**").hasAuthority("ROLE_API_CLIENT")
+                .requestMatchers("/api/v1/external/**").denyAll()
+
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/agents/list/active")
+                    .hasAnyAuthority(
+                        "External", "EXTERNAL", "ROLE_EXTERNAL",
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/categories/list")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers("/api/v1/master/categories/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/governance/requests/approved")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/governance/propose")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers("/api/v1/master/governance/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/templates/submit")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/templates/test-dry-run")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/templates/list/my-submissions")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers(HttpMethod.GET,
+                    "/api/v1/master/templates/by-request/*",
+                    "/api/v1/master/templates/requests/details/*")
+                    .hasAnyAuthority(
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers("/api/v1/master/templates/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/dashboard/user/stats")
+                    .hasAnyAuthority(
+                        "External", "EXTERNAL", "ROLE_EXTERNAL",
+                        "DataViewer", "DATAVIEWER", "ROLE_DATAVIEWER",
+                        "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                    )
+                .requestMatchers("/api/v1/reports/**").hasAnyAuthority(
+                    "DataViewer", "DATAVIEWER", "ROLE_DATAVIEWER",
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+
+                // Remaining manager-plane endpoints are never available merely
+                // because a portal user is authenticated.
+                .requestMatchers("/api/v1/master/**").hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+
+                // Unknown endpoints are denied by default.
+                .anyRequest().denyAll()
             )
             
             // 7. JWT FILTER (Primary Auth)
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(managerPlaneFilter, JwtAuthenticationFilter.class)
+            .addFilterAfter(swaggerSessionAuthFilter, JwtAuthenticationFilter.class)
             
             // 8. API KEY FILTER (Secondary Auth)
             .addFilterAfter((request, response, chain) -> {
                 HttpServletRequest httpRequest = (HttpServletRequest) request;
                 if (SecurityContextHolder.getContext().getAuthentication() == null) {
-                    if (!"OPTIONS".equalsIgnoreCase(httpRequest.getMethod()) && !httpRequest.getRequestURI().contains("/auth/login")) {
+                    if (!"OPTIONS".equalsIgnoreCase(httpRequest.getMethod())
+                            && !httpRequest.getRequestURI().contains("/auth/login")) {
                         apiKeyFilter(httpRequest);
                     }
                 }
                 chain.doFilter(request, response);
-            }, JwtAuthenticationFilter.class);
+            }, SwaggerSessionAuthenticationFilter.class);
             
         return http.build();
     }
@@ -134,7 +320,7 @@ public class SecurityConfig {
                     UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                         client.getClientName(), 
                         null, 
-                        Collections.singletonList(new SimpleGrantedAuthority("ROLE_EXTERNAL"))
+                        Collections.singletonList(new SimpleGrantedAuthority("ROLE_API_CLIENT"))
                     );
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 });

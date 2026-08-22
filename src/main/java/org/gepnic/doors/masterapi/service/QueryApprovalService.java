@@ -24,17 +24,17 @@ public class QueryApprovalService {
  public List<Map<String, Object>> getApprovedDataRequests() {
     // Wrap aliases in double quotes \" to force CamelCase keys in the Map
     String sql = "SELECT " +
-                 "requestid as \"id\", " +             
+                 "request_id as \"id\", " +
                  "request_title as \"requestTitle\", " + 
                  "target_agent_id as \"targetAgentId\", " + 
                  "requested_by as \"requestedBy\", " +   
                  "justification, " +
-                 "samplejson as \"sampleJson\", " +      
-                 "attachmentname as \"attachmentName\", " + 
-                 "updated_at as \"approvedAt\" " +         
+                 "sample_json as \"sampleJson\", " +
+                 "attachment_name as \"attachmentName\", " +
+                 "updated_at as \"approvedAt\" " +
                  "FROM data_pull_requests " +
                  "WHERE status = 'APPROVED' " +
-                 "ORDER BY createdat DESC";
+                 "ORDER BY created_at DESC";
     
     return jdbcTemplate.queryForList(sql);
 }

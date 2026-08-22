@@ -7,6 +7,7 @@ import org.gepnic.doors.masterapi.dto.ReportExecutionRequest;
 import org.gepnic.doors.masterapi.dto.SelectionOption;
 import org.gepnic.doors.masterapi.dto.ReportResult; // 🛡️ Import your new Record
 import org.gepnic.doors.masterapi.service.ReportViewerService;
+import org.gepnic.doors.masterapi.service.ReportExportService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +26,7 @@ import java.util.Map;
 public class ReportViewerController {
 
     private final ReportViewerService reportViewerService;
+    private final ReportExportService reportExportService;
 
     @GetMapping("/templates")
     public ResponseEntity<ApiResponse<List<SelectionOption>>> getAuthorizedTemplates(Principal principal) {
@@ -100,4 +102,32 @@ public ResponseEntity<?> executeReport(
         return ResponseEntity.status(500).body(ApiResponse.error("Execution Failed", 500));
     }
 }
+
+    @PostMapping("/exports")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> startExport(
+            @RequestBody ReportExecutionRequest request,
+            Principal principal) {
+        request.setPerformedBy(principal.getName());
+        return ResponseEntity.accepted().body(ApiResponse.success(
+                reportExportService.start(request, principal.getName()),
+                "Export queued"
+        ));
+    }
+
+    @GetMapping("/exports/{jobId}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> exportStatus(
+            @PathVariable java.util.UUID jobId,
+            Principal principal) {
+        return ResponseEntity.ok(ApiResponse.success(
+                reportExportService.status(jobId, principal.getName()),
+                "Export status"
+        ));
+    }
+
+    @GetMapping("/exports/{jobId}/download")
+    public ResponseEntity<org.springframework.core.io.Resource> downloadExport(
+            @PathVariable java.util.UUID jobId,
+            Principal principal) {
+        return reportExportService.download(jobId, principal.getName());
+    }
 }

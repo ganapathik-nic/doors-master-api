@@ -5,6 +5,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -40,9 +42,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String authHeader = request.getHeader("Authorization");
         String uri = request.getRequestURI();
 
-        if (uri.contains("/api/v1/auth/")) {
+        if (isPublicAuthEndpoint(uri)) {
             filterChain.doFilter(request, response);
             return;
+        }
+
+        String cookieToken = null;
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            cookieToken = readCookie(request, "DOORS_SESSION");
+            if (cookieToken != null && !cookieToken.isBlank()) {
+                authHeader = "Bearer " + cookieToken;
+            }
         }
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
@@ -63,6 +73,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     if (userOpt.isPresent()) {
                         User user = userOpt.get();
                         String activeDbSid = user.getCurrentSessionId();
+
+                        if (Boolean.TRUE.equals(user.getPasswordResetRequired())
+                                && !uri.equals("/api/v1/auth/change-password")
+                                && !uri.equals("/api/v1/auth/me")
+                                && !uri.equals("/api/v1/auth/logout")) {
+                            log.warn("DOORS-SECURITY: Password change required for user: {}", username);
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.setContentType("application/json");
+                            response.getWriter().write(
+                                "{\"error\":\"Password change required\",\"message\":\"Change the temporary password before continuing\"}"
+                            );
+                            return;
+                        }
 
                         if (activeDbSid != null && activeDbSid.equals(tokenSid)) {
                             // ✅ Success logic
@@ -98,14 +121,65 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     }
                 } else if (claims == null) {
                     publishFailure("UNKNOWN", "Invalid or Expired Security Context", request);
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json");
+                    response.getWriter().write(
+                        "{\"error\":\"Unauthorized\",\"message\":\"Invalid or expired session\"}"
+                    );
+                    return;
                 }
             } catch (Exception e) {
                 log.error("DOORS-SECURITY: Token error: {}", e.getMessage());
                 publishFailure("UNKNOWN", "Token verification failed", request);
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json");
+                response.getWriter().write(
+                    "{\"error\":\"Unauthorized\",\"message\":\"Invalid or expired session\"}"
+                );
+                return;
             }
         }
         
-        filterChain.doFilter(request, response);
+        HttpServletRequest requestForChain = cookieToken == null
+                ? request
+                : withAuthorizationHeader(request, "Bearer " + cookieToken);
+        filterChain.doFilter(requestForChain, response);
+    }
+
+    private boolean isPublicAuthEndpoint(String uri) {
+        return uri.equals("/api/v1/auth/login")
+                || uri.equals("/api/v1/auth/register")
+                || uri.equals("/api/v1/auth/captcha")
+                || uri.equals("/api/v1/auth/csrf")
+                || uri.equals("/api/v1/auth/mfa/verify")
+                || uri.equals("/api/v1/auth/logout")
+                || uri.equals("/api/auth/captcha");
+    }
+
+    private String readCookie(HttpServletRequest request, String name) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) return null;
+        return Arrays.stream(cookies)
+                .filter(cookie -> name.equals(cookie.getName()))
+                .map(Cookie::getValue)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private HttpServletRequest withAuthorizationHeader(HttpServletRequest request, String value) {
+        return new HttpServletRequestWrapper(request) {
+            @Override
+            public String getHeader(String name) {
+                return "Authorization".equalsIgnoreCase(name) ? value : super.getHeader(name);
+            }
+
+            @Override
+            public Enumeration<String> getHeaders(String name) {
+                return "Authorization".equalsIgnoreCase(name)
+                        ? Collections.enumeration(List.of(value))
+                        : super.getHeaders(name);
+            }
+        };
     }
 
     private void publishFailure(String user, String message, HttpServletRequest request) {

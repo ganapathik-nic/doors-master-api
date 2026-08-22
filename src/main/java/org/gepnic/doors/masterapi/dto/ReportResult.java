@@ -8,5 +8,7 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ReportResult(
     @JsonProperty("data") List<Map<String, Object>> data, 
-    @JsonProperty("offlineAgents") List<String> offlineAgents
+    @JsonProperty("offlineAgents") List<String> offlineAgents,
+    @JsonProperty("nodeErrors") Map<String, String> nodeErrors,
+    @JsonProperty("pagination") ReportPagination pagination
 ) {}

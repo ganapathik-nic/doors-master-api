@@ -75,7 +75,7 @@ private String currentSessionId;
     @Column(name = "mfa_secret_encrypted", columnDefinition = "TEXT")
     private String mfaSecretEncrypted;
 
-    @Column(name = "vpn_ip", length = 64)
+    @Column(name = "vpn_ip", length = 1024)
     private String vpnIp;
 
     @Column(name = "vpn_certificate_reference")

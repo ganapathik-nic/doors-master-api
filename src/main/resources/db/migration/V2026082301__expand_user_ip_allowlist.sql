@@ -1,0 +1,2 @@
+ALTER TABLE users
+    ALTER COLUMN vpn_ip TYPE VARCHAR(1024);

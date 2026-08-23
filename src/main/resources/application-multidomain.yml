@@ -1,0 +1,27 @@
+spring:
+  devtools:
+    livereload:
+      enabled: false
+
+doors:
+  planes:
+    # Host assignments are maintained centrally in application.yml.
+    enforced: true
+  security:
+    # Local development uses HTTP. Production retains Secure cookies.
+    session-cookie-secure: false
+    # Development plane testing generates repeated CAPTCHA and route probes.
+    # Production keeps the stricter defaults from application.yml.
+    rate-limit:
+      ui:
+        capacity: 60
+        refill-minutes: 1
+        penalty-minutes: 1
+      gateway:
+        capacity: 30
+        refill-minutes: 1
+    allowed-origins:
+      - "http://doorsadmin.doors.test"
+      - "http://doorsexternal.doors.test"
+      - "https://doorsadmin.gepnic.nic.in"
+      - "https://doorsexternal.gepnic.nic.in"

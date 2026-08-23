@@ -19,12 +19,36 @@ import java.util.Locale;
 public class ManagerPlaneFilter extends OncePerRequestFilter {
 
     private final ManagerPlaneAccess managerPlaneAccess;
+    private final PlaneRolePolicy planeRolePolicy;
     private final UserRepository userRepository;
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        // These endpoints must remain reachable when the browser carries a
+        // stale session from the wrong plane, otherwise the login page cannot
+        // obtain CSRF/CAPTCHA data or clear that session. Role/plane checks for
+        // new sessions are enforced inside login and MFA verification.
+        return path.equals("/api/v1/auth/csrf")
+                || path.equals("/api/v1/auth/captcha")
+                || path.equals("/api/v1/auth/login")
+                || path.equals("/api/v1/auth/mfa/verify")
+                || path.equals("/api/v1/auth/logout");
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        org.gepnic.doors.masterapi.model.User user = null;
+        if (authentication != null && authentication.isAuthenticated()
+                && !"anonymousUser".equals(authentication.getPrincipal())) {
+            user = userRepository.findByUsername(authentication.getName()).orElse(null);
+            if (user == null || !planeRolePolicy.isRoleAllowed(PlaneHostResolver.resolve(request), user.getRole())) {
+                deny(response, "DOORS-ROLE-PLANE-DENIED", "This account is not permitted on this portal");
+                return;
+            }
+        }
         if (isPrivileged(authentication) && !managerPlaneAccess.isAllowed(request)) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.setContentType("application/json");
@@ -33,16 +57,15 @@ public class ManagerPlaneFilter extends OncePerRequestFilter {
             return;
         }
         if (isDataManager(authentication)) {
-            var user = userRepository.findByUsername(authentication.getName()).orElse(null);
             if (user == null || "REVOKED".equalsIgnoreCase(user.getVpnStatus())) {
                 deny(response, "DOORS-VPN-ENTITLEMENT-REQUIRED", "VPN access has been revoked");
                 return;
             }
-            if ("CONFIRMED".equalsIgnoreCase(user.getVpnStatus())
-                    && !managerPlaneAccess.isVpnIpAllowed(request, user.getVpnIp())) {
-                deny(response, "DOORS-VPN-IP-NOT-ALLOWED", "Current VPN IP is not whitelisted for this account");
-                return;
-            }
+        }
+        if (user != null && user.getVpnIp() != null && !user.getVpnIp().isBlank()
+                && !managerPlaneAccess.isVpnIpAllowed(request, user.getVpnIp())) {
+            deny(response, "DOORS-IP-NOT-ALLOWED", "Current IP is not whitelisted for this account");
+            return;
         }
         chain.doFilter(request, response);
     }

@@ -40,7 +40,7 @@ public class AdminUserController {
         try {
             String hybridKey = buildHybridKey(authorizationHeader);
             List<Map<String, Object>> safeUsers = userRepository.findByStatus(status).stream()
-                    .filter(user -> canGovern(authentication, user))
+                    .filter(user -> canView(authentication, user))
                     .map(this::toSafeUserRecord)
                     .toList();
             String serializedUsers = new com.fasterxml.jackson.databind.ObjectMapper()
@@ -108,18 +108,18 @@ public class AdminUserController {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("message", "Security Administrator creation requires controlled bootstrap"));
             }
+            String ipAllowlist = normalize(body == null ? null : body.get("vpnIp"));
+            if (ipAllowlist != null && !isValidIpAllowlist(ipAllowlist)) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "message", "One or more IP/CIDR allowlist entries are invalid"));
+            }
+            user.setVpnIp(ipAllowlist);
             if (isDataManagerRole(user.getRole())) {
-                String vpnIp = normalize(body == null ? null : body.get("vpnIp"));
                 String certificateReference = normalize(body == null ? null : body.get("vpnCertificateReference"));
-                if (vpnIp != null && !isValidIpOrCidr(vpnIp)) {
-                    return ResponseEntity.badRequest().body(Map.of(
-                            "message", "NIC VPN IP/CIDR is invalid"));
-                }
-                user.setVpnIp(vpnIp);
                 user.setVpnCertificateReference(certificateReference);
                 // Phase-I grace period: VPN details may be registered later. Do not
                 // claim VPN confirmation unless both controlled values were supplied.
-                user.setVpnStatus(vpnIp != null && certificateReference != null
+                user.setVpnStatus(ipAllowlist != null && certificateReference != null
                         ? "CONFIRMED"
                         : "GRACE_PERIOD");
                 user.setPrivilegedApprovedBy(authentication.getName());
@@ -253,9 +253,9 @@ public class AdminUserController {
                                              @RequestBody Map<String, String> body,
                                              Authentication authentication) {
         return userRepository.findById(id).map(user -> {
-            if (!isSecurityAdmin(authentication) || !isDataManagerRole(user.getRole())) {
+            if (!canManageIpAllowlist(authentication, user)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of("message", "Only Security Administrator may manage DataManager VPN access"));
+                        .body(Map.of("message", "You cannot manage the IP allowlist for this user"));
             }
 
             String action = normalize(body == null ? null : body.get("action"));
@@ -263,11 +263,11 @@ public class AdminUserController {
             if ("REMOVE".equalsIgnoreCase(action)) {
                 user.setVpnIp(null);
                 user.setVpnCertificateReference(null);
-                user.setVpnStatus("REVOKED");
+                user.setVpnStatus(isDataManagerRole(user.getRole()) ? "GRACE_PERIOD" : "NOT_REQUIRED");
                 user.setCurrentSessionId(null);
                 userRepository.save(user);
-                securityAuditService.record(authentication.getName(), "VPN_IP_REMOVED", user.getUsername(), 200);
-                return ResponseEntity.ok(Map.of("message", "VPN IP removed and active session revoked"));
+                securityAuditService.record(authentication.getName(), "USER_IP_ALLOWLIST_CLEARED", user.getUsername(), 200);
+                return ResponseEntity.ok(Map.of("message", "IP allowlist cleared; unrestricted access restored and active session revoked"));
             }
             if (!"WHITELIST".equalsIgnoreCase(action)) {
                 return ResponseEntity.badRequest().body(Map.of("message", "Unsupported VPN action"));
@@ -275,8 +275,8 @@ public class AdminUserController {
 
             String vpnIp = normalize(body.get("vpnIp"));
             String certificateReference = normalize(body.get("vpnCertificateReference"));
-            if (vpnIp == null || !isValidIpOrCidr(vpnIp)) {
-                return ResponseEntity.badRequest().body(Map.of("message", "A valid VPN IP or CIDR is required"));
+            if (vpnIp == null || !isValidIpAllowlist(vpnIp)) {
+                return ResponseEntity.badRequest().body(Map.of("message", "A valid comma-separated IP/CIDR allowlist is required"));
             }
             user.setVpnIp(vpnIp);
             user.setVpnCertificateReference(certificateReference);
@@ -285,13 +285,23 @@ public class AdminUserController {
             user.setPrivilegedApprovedAt(LocalDateTime.now());
             user.setCurrentSessionId(null);
             userRepository.save(user);
-            securityAuditService.record(authentication.getName(), "VPN_IP_WHITELISTED", user.getUsername(), 200);
-            return ResponseEntity.ok(Map.of("message", "VPN IP whitelisted; user must sign in again"));
+            securityAuditService.record(authentication.getName(), "USER_IP_ALLOWLIST_UPDATED", user.getUsername(), 200);
+            return ResponseEntity.ok(Map.of("message", "IP allowlist updated; user must sign in again"));
         }).orElse(ResponseEntity.notFound().build());
     }
 
     private boolean canGovern(Authentication authentication, User target) {
         if (isSecurityAdmin(authentication)) return isDataManagerRole(target.getRole());
+        return isDataManager(authentication) && STANDARD_ROLES.contains(target.getRole());
+    }
+
+    private boolean canView(Authentication authentication, User target) {
+        if (isSecurityAdmin(authentication)) return !isSecurityAdminRole(target.getRole());
+        return canGovern(authentication, target);
+    }
+
+    private boolean canManageIpAllowlist(Authentication authentication, User target) {
+        if (isSecurityAdmin(authentication)) return !isSecurityAdminRole(target.getRole());
         return isDataManager(authentication) && STANDARD_ROLES.contains(target.getRole());
     }
 
@@ -341,5 +351,14 @@ public class AdminUserController {
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private boolean isValidIpAllowlist(String value) {
+        String[] entries = value.split("[,;\\r\\n]+", -1);
+        if (entries.length == 0) return false;
+        for (String entry : entries) {
+            if (entry.isBlank() || !isValidIpOrCidr(entry.trim())) return false;
+        }
+        return true;
     }
 }

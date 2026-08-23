@@ -45,6 +45,22 @@ spring:
 
 # Portal Registry Configuration
 doors:
+  # Canonical hostname-to-plane assignments. PlaneRoutingFilter uses these
+  # values to decide which API families may be exposed on each host.
+  planes:
+    # Fail closed: plane separation remains active even when a deployment
+    # accidentally omits the multidomain Spring profile. It may only be
+    # disabled explicitly for isolated single-host development.
+    enforced: ${DOORS_PLANES_ENFORCED:true}
+    admin-hosts:
+      - ${DOORS_ADMIN_HOST_LOCAL:doorsadmin.doors.test}
+      - ${DOORS_ADMIN_HOST_PRODUCTION:doorsadmin.gepnic.nic.in}
+    external-hosts:
+      - ${DOORS_EXTERNAL_HOST_LOCAL:doorsexternal.doors.test}
+      - ${DOORS_EXTERNAL_HOST_PRODUCTION:doorsexternal.gepnic.nic.in}
+    api-hosts:
+      - ${DOORS_API_HOST_LOCAL:doorsapi.doors.test}
+      - ${DOORS_API_HOST_PRODUCTION:doorsapi.gepnic.nic.in}
   contracts:
     # Enable only in staging. One successful Swagger execution then records the
     # inferred schema (never the response values) for the selected uniqueName.
@@ -63,6 +79,10 @@ doors:
     allowed-origins:
       - "http://localhost:*"
       - "http://127.0.0.1:*"
+      - "https://doorsadmin.doors.test"
+      - "https://doorsexternal.doors.test"
+      - "https://doorsadmin.doors.test:*"
+      - "https://doorsexternal.doors.test:*"
       - "http://demoetenders.tn.nic.in:*"
       - "https://demoetenders.tn.nic.in"
     rate-limit:

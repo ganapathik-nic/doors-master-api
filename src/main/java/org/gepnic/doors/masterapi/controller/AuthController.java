@@ -45,6 +45,8 @@ import org.gepnic.doors.masterapi.exception.EncryptionException;
 import org.gepnic.doors.masterapi.dto.MfaVerifyRequest;
 import org.gepnic.doors.masterapi.service.TotpService;
 import org.gepnic.doors.masterapi.config.ManagerPlaneAccess;
+import org.gepnic.doors.masterapi.config.PlaneRolePolicy;
+import org.gepnic.doors.masterapi.config.PlaneHostResolver;
 import java.time.Instant;
 
 @Slf4j
@@ -68,6 +70,7 @@ public class AuthController {
     private final CaptchaService captchaService;
     private final TotpService totpService;
     private final ManagerPlaneAccess managerPlaneAccess;
+    private final PlaneRolePolicy planeRolePolicy;
     // Simple local cache: Key = CaptchaID, Value = ExpectedText
     private final Map<String, String> captchaCache = new ConcurrentHashMap<>();
     private final Map<String, MfaChallenge> mfaChallenges = new ConcurrentHashMap<>();
@@ -160,7 +163,7 @@ public class AuthController {
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
     }
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest, HttpServletRequest httpRequest) {
         // 🛡️ 1. Verify Captcha
         String expectedText = captchaCache.get(loginRequest.captchaId());
         if (expectedText == null || !expectedText.equals(loginRequest.captchaValue())) {
@@ -214,6 +217,13 @@ public class AuthController {
                     if ("PENDING".equals(user.getStatus()) || Boolean.FALSE.equals(user.getIsActive())) {
                         captchaCache.remove(saltKey);
                         return ResponseEntity.status(403).body(Map.of("message", "Account pending approval"));
+                    }
+
+                    if (!planeRolePolicy.isRoleAllowed(PlaneHostResolver.resolve(httpRequest), user.getRole())) {
+                        captchaCache.remove(saltKey);
+                        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                                "code", "DOORS-ROLE-PLANE-DENIED",
+                                "message", "This account is not permitted on this portal"));
                     }
 
                     if (legacyRawPassword) {
@@ -274,6 +284,12 @@ public class AuthController {
         }
 
         return userRepository.findByUsername(challenge.username()).map(user -> {
+            if (!planeRolePolicy.isRoleAllowed(PlaneHostResolver.resolve(httpRequest), user.getRole())) {
+                mfaChallenges.remove(request.challengeId());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        "code", "DOORS-ROLE-PLANE-DENIED",
+                        "message", "This account is not permitted on this portal"));
+            }
             if (isPrivilegedRole(user.getRole()) && !managerPlaneAccess.isAllowed(httpRequest)) {
                 mfaChallenges.remove(request.challengeId());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
@@ -287,13 +303,12 @@ public class AuthController {
                         "code", "DOORS-VPN-ENTITLEMENT-REQUIRED",
                         "message", "NIC VPN entitlement has not been confirmed"));
             }
-            if ((user.getRole().equalsIgnoreCase("DataManager") || user.getRole().equalsIgnoreCase("ADMIN"))
-                    && "CONFIRMED".equalsIgnoreCase(user.getVpnStatus())
+            if (user.getVpnIp() != null && !user.getVpnIp().isBlank()
                     && !managerPlaneAccess.isVpnIpAllowed(httpRequest, user.getVpnIp())) {
                 mfaChallenges.remove(request.challengeId());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
-                        "code", "DOORS-VPN-IP-NOT-ALLOWED",
-                        "message", "Current VPN IP is not whitelisted for this account"));
+                        "code", "DOORS-IP-NOT-ALLOWED",
+                        "message", "Current IP is not whitelisted for this account"));
             }
             String secret = challenge.enrollmentSecret() != null
                     ? challenge.enrollmentSecret()

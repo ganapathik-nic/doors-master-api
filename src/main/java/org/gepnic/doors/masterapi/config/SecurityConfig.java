@@ -3,7 +3,6 @@ package org.gepnic.doors.masterapi.config;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.gepnic.doors.masterapi.repository.ApiClientRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -37,15 +36,13 @@ public class SecurityConfig {
     private final SwaggerSessionAuthenticationFilter swaggerSessionAuthFilter;
     private final ManagerPlaneFilter managerPlaneFilter;
     private final ApiClientRepository apiClientRepository;
-
-    @Value("${doors.security.allowed-origins:http://localhost:5173}")
-    private List<String> configuredAllowedOrigins;
+    private final DoorsSecurityProperties doorsSecurityProperties;
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         
-        configuration.setAllowedOriginPatterns(configuredAllowedOrigins); 
+        configuration.setAllowedOriginPatterns(doorsSecurityProperties.getAllowedOrigins());
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList(
                 "Authorization", "Content-Type", "X-API-KEY", "X-DOORS-SWAGGER-SESSION",

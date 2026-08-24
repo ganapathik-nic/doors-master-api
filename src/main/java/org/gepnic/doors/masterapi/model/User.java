@@ -5,6 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import org.gepnic.doors.masterapi.entity.ApiClient;
 
 /**
  * Entity representing a Portal User.
@@ -31,6 +32,10 @@ public class User {
 
     @Column(nullable = false)
     private String role; // ADMIN, EXTERNAL
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "api_client_id")
+    private ApiClient apiClient;
 
     @Column(name = "is_active")
     private Boolean isActive = false;

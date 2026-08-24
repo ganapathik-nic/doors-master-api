@@ -520,7 +520,7 @@ public class AuthController {
                                  .body(Map.of("message", "This email is already registered."));
         }
         try {
-            if (!java.util.Set.of("External", "Developer", "DataViewer", "DataManager")
+            if (!java.util.Set.of("External", "Developer", "DataViewer", "DataManager", "ApiUser")
                     .contains(regRequest.role())) {
                 return ResponseEntity.badRequest().body(Map.of("message", "Unsupported requested role"));
             }

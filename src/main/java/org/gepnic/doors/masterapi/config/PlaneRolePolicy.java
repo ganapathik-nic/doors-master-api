@@ -12,7 +12,7 @@ import java.util.Set;
 public class PlaneRolePolicy {
 
     private static final Set<String> ADMIN_ROLES = Set.of("DATAMANAGER", "ADMIN", "SECURITYADMIN", "DEVELOPER");
-    private static final Set<String> EXTERNAL_ROLES = Set.of("EXTERNAL", "DATAVIEWER");
+    private static final Set<String> EXTERNAL_ROLES = Set.of("EXTERNAL", "DATAVIEWER", "APIUSER");
 
     private final PlaneProperties properties;
 

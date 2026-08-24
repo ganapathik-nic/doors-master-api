@@ -6,12 +6,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import java.util.Optional;
+import java.util.List;
 
 @Repository
 public interface ApiClientRepository extends JpaRepository<ApiClient, Long> {
 
     // Used by ExternalConsumerController to find the client by their key
     Optional<ApiClient> findByApiKey(String apiKey);
+
+    List<ApiClient> findByIsActiveTrueOrderByClientNameAsc();
 
     // Used by ApiKeyInterceptor for high-performance security checks
     boolean existsByApiKeyAndIsActiveTrue(String apiKey);

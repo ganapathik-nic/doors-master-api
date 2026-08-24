@@ -226,6 +226,8 @@ public class SecurityConfig {
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
                 .requestMatchers("/api/v1/external/execute/**").hasAuthority("ROLE_API_CLIENT")
+                .requestMatchers(HttpMethod.GET, "/api/v1/external/api-user/client")
+                    .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
                 .requestMatchers("/api/v1/external/**").denyAll()
 
                 .requestMatchers(HttpMethod.GET, "/api/v1/master/agents/list/active")

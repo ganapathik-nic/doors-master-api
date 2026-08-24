@@ -19,6 +19,8 @@ import java.util.Set;
 import org.gepnic.doors.masterapi.service.SecurityAuditService;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.gepnic.doors.masterapi.util.PasswordPolicy;
+import org.gepnic.doors.masterapi.entity.ApiClient;
+import org.gepnic.doors.masterapi.repository.ApiClientRepository;
 
 @RestController
 @RequestMapping("/api/v1/admin/users")
@@ -26,11 +28,22 @@ import org.gepnic.doors.masterapi.util.PasswordPolicy;
 @Slf4j
 public class AdminUserController {
 
-    private static final Set<String> STANDARD_ROLES = Set.of("External", "Developer", "DataViewer");
+    private static final Set<String> STANDARD_ROLES = Set.of("External", "Developer", "DataViewer", "ApiUser");
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder; // Added for password hashing
     private final SecurityAuditService securityAuditService;
+    private final ApiClientRepository apiClientRepository;
+
+    @GetMapping("/api-clients/options")
+    public ResponseEntity<List<Map<String, Object>>> getApiClientOptions() {
+        List<Map<String, Object>> options = apiClientRepository.findByIsActiveTrueOrderByClientNameAsc().stream()
+                .map(client -> Map.<String, Object>of(
+                        "clientId", client.getClientId(),
+                        "clientName", client.getClientName()))
+                .toList();
+        return ResponseEntity.ok(options);
+    }
 
     @GetMapping("/list")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getUserList(
@@ -66,6 +79,8 @@ public class AdminUserController {
         record.put("username", user.getUsername());
         record.put("email", user.getEmail());
         record.put("role", user.getRole());
+        record.put("apiClientId", user.getApiClient() == null ? null : user.getApiClient().getClientId());
+        record.put("apiClientName", user.getApiClient() == null ? null : user.getApiClient().getClientName());
         record.put("isActive", user.getIsActive());
         record.put("status", user.getStatus());
         record.put("rejectionReason", user.getRejectionReason());
@@ -107,6 +122,14 @@ public class AdminUserController {
             if (isSecurityAdminRole(user.getRole())) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("message", "Security Administrator creation requires controlled bootstrap"));
+            }
+            if (isApiUserRole(user.getRole())) {
+                ApiClient client = resolveActiveClient(body == null ? null : body.get("clientId"));
+                if (client == null) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                            "message", "An active API client mapping is required for ApiUser approval"));
+                }
+                user.setApiClient(client);
             }
             String ipAllowlist = normalize(body == null ? null : body.get("vpnIp"));
             if (ipAllowlist != null && !isValidIpAllowlist(ipAllowlist)) {
@@ -197,6 +220,16 @@ public class AdminUserController {
                     user.setVpnStatus("REVOKED");
                 } else if (!STANDARD_ROLES.contains(requestedRole)) {
                     return ResponseEntity.badRequest().body(Map.of("message", "Unsupported role"));
+                }
+                if (isApiUserRole(requestedRole)) {
+                    ApiClient client = resolveActiveClient(body.get("clientId"));
+                    if (client == null) {
+                        return ResponseEntity.badRequest().body(Map.of(
+                                "message", "An active API client mapping is required for the ApiUser role"));
+                    }
+                    user.setApiClient(client);
+                } else {
+                    user.setApiClient(null);
                 }
                 user.setRole(requestedRole);
                 user.setCurrentSessionId(null);
@@ -325,6 +358,20 @@ public class AdminUserController {
 
     private boolean isSecurityAdminRole(String role) {
         return role != null && role.equalsIgnoreCase("SecurityAdmin");
+    }
+
+    private boolean isApiUserRole(String role) {
+        return role != null && role.equalsIgnoreCase("ApiUser");
+    }
+
+    private ApiClient resolveActiveClient(String clientId) {
+        try {
+            return apiClientRepository.findById(Long.valueOf(clientId))
+                    .filter(client -> Boolean.TRUE.equals(client.getIsActive()))
+                    .orElse(null);
+        } catch (RuntimeException exception) {
+            return null;
+        }
     }
 
     private String normalize(String value) {

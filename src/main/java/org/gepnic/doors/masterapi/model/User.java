@@ -5,6 +5,8 @@ import lombok.Data;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import org.gepnic.doors.masterapi.entity.ApiClient;
 
 /**
@@ -33,9 +35,11 @@ public class User {
     @Column(nullable = false)
     private String role; // ADMIN, EXTERNAL
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "api_client_id")
-    private ApiClient apiClient;
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(name = "user_api_clients",
+            joinColumns = @JoinColumn(name = "user_id"),
+            inverseJoinColumns = @JoinColumn(name = "client_id"))
+    private Set<ApiClient> apiClients = new LinkedHashSet<>();
 
     @Column(name = "is_active")
     private Boolean isActive = false;

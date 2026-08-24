@@ -226,7 +226,9 @@ public class SecurityConfig {
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
                 .requestMatchers("/api/v1/external/execute/**").hasAuthority("ROLE_API_CLIENT")
-                .requestMatchers(HttpMethod.GET, "/api/v1/external/api-user/client")
+                .requestMatchers(HttpMethod.GET, "/api/v1/external/api-user/clients")
+                    .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
+                .requestMatchers(HttpMethod.POST, "/api/v1/external/api-user/swagger-sessions")
                     .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
                 .requestMatchers("/api/v1/external/**").denyAll()
 

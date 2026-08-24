@@ -1,5 +1,6 @@
 package org.gepnic.doors.masterapi.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.gepnic.doors.masterapi.dto.ApiResponse;
 import org.gepnic.doors.masterapi.entity.ApiClient;
@@ -9,46 +10,73 @@ import org.gepnic.doors.masterapi.model.User;
 import org.gepnic.doors.masterapi.repository.ClientQueryMapRepository;
 import org.gepnic.doors.masterapi.repository.SqlTemplateRepository;
 import org.gepnic.doors.masterapi.repository.UserRepository;
+import org.gepnic.doors.masterapi.service.SwaggerSessionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/v1/external/api-user")
 @RequiredArgsConstructor
 public class ApiUserSelfServiceController {
-
     private final UserRepository userRepository;
     private final ClientQueryMapRepository mappingRepository;
     private final SqlTemplateRepository templateRepository;
+    private final JdbcOperations jdbcTemplate;
+    private final SwaggerSessionService swaggerSessionService;
 
-    @GetMapping("/client")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getAssignedClient(Authentication authentication) {
-        User user = userRepository.findByUsername(authentication.getName()).orElse(null);
-        if (user == null || !"ApiUser".equalsIgnoreCase(user.getRole())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("This account is not an API user", 403));
-        }
-
-        ApiClient client = user.getApiClient();
-        if (client == null) {
+    @GetMapping("/clients")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getAssignedClients(Authentication authentication) {
+        User user = apiUser(authentication);
+        if (user == null) return forbidden("This account is not an API user");
+        List<Map<String, Object>> profiles = user.getApiClients().stream()
+                .filter(client -> Boolean.TRUE.equals(client.getIsActive()))
+                .sorted(Comparator.comparing(ApiClient::getClientName, String.CASE_INSENSITIVE_ORDER))
+                .map(this::profile).toList();
+        if (profiles.isEmpty()) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(ApiResponse.error("No API client is assigned to this account", 409));
+                    .body(ApiResponse.error("No active API clients are assigned to this account", 409));
         }
-        if (!Boolean.TRUE.equals(client.getIsActive())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("The assigned API client is inactive", 403));
-        }
+        return ResponseEntity.ok(ApiResponse.success(profiles, "Assigned API clients retrieved"));
+    }
 
-        List<Map<String, Object>> templates = new ArrayList<>();
+    @PostMapping("/swagger-sessions")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createSwaggerSession(
+            @RequestBody Map<String, Object> body, Authentication authentication, HttpServletRequest request) {
+        try {
+            User user = apiUser(authentication);
+            if (user == null) return forbidden("This account is not an API user");
+            Long clientId = Long.valueOf(String.valueOf(body.get("clientId")));
+            if (user.getApiClients().stream().noneMatch(client -> clientId.equals(client.getClientId()))) {
+                return forbidden("The selected API client is not assigned to this account");
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> requestBody = (Map<String, Object>) body.get("body");
+            Map<String, Object> launch = swaggerSessionService.createLaunch(
+                    clientId, String.valueOf(body.get("uniqueName")), requestBody, null,
+                    authentication.getName(), request.getHeader("User-Agent"));
+            return ResponseEntity.ok(ApiResponse.success(launch, "Single-use Swagger launch created"));
+        } catch (SecurityException exception) {
+            return forbidden(exception.getMessage());
+        } catch (NoSuchElementException exception) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(exception.getMessage(), 404));
+        } catch (RuntimeException exception) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid Swagger launch request", 400));
+        }
+    }
+
+    private User apiUser(Authentication authentication) {
+        if (authentication == null) return null;
+        return userRepository.findByUsername(authentication.getName())
+                .filter(user -> "ApiUser".equalsIgnoreCase(user.getRole())).orElse(null);
+    }
+
+    private Map<String, Object> profile(ApiClient client) {
+        List<Map<String, Object>> details = new ArrayList<>();
         for (ClientQueryMap mapping : mappingRepository.findByClientId(client.getClientId())) {
             SqlTemplate template = templateRepository.findById(mapping.getQueryId()).orElse(null);
             if (template == null || !Boolean.TRUE.equals(template.getIsActive())
@@ -59,18 +87,25 @@ public class ApiUserSelfServiceController {
             item.put("description", template.getDescription());
             item.put("parameters", template.getParameters());
             item.put("responseFilterColumn", mapping.getResponseFilterColumn());
-            templates.add(item);
+            item.put("responseFilterValue", mapping.getResponseFilterValue());
+            details.add(item);
         }
-
+        List<String> agents = jdbcTemplate.queryForList(
+                "SELECT agent_id FROM user_authorized_agents WHERE user_name = ?", String.class, client.getClientName());
         Map<String, Object> profile = new LinkedHashMap<>();
         profile.put("clientId", client.getClientId());
         profile.put("clientName", client.getClientName());
         profile.put("description", client.getDescription());
         profile.put("apiKey", client.getApiKey());
         profile.put("ipWhitelist", client.getIpWhitelist());
-        profile.put("encryptionEnabled", client.isEncryptionEnabled());
-        profile.put("assignedAgents", user.getAssignedAgents());
-        profile.put("authorizedTemplates", templates);
-        return ResponseEntity.ok(ApiResponse.success(profile, "Assigned API client retrieved"));
+        profile.put("isEncryptionEnabled", client.isEncryptionEnabled());
+        profile.put("isActive", client.getIsActive());
+        profile.put("assignedAgents", agents);
+        profile.put("authorizedDetails", details);
+        return profile;
+    }
+
+    private <T> ResponseEntity<ApiResponse<T>> forbidden(String message) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(message, 403));
     }
 }

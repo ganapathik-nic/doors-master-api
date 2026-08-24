@@ -16,6 +16,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.http.HttpStatus;
 import java.time.LocalDateTime;
 import java.util.Set;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import org.gepnic.doors.masterapi.service.SecurityAuditService;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.gepnic.doors.masterapi.util.PasswordPolicy;
@@ -79,8 +81,8 @@ public class AdminUserController {
         record.put("username", user.getUsername());
         record.put("email", user.getEmail());
         record.put("role", user.getRole());
-        record.put("apiClientId", user.getApiClient() == null ? null : user.getApiClient().getClientId());
-        record.put("apiClientName", user.getApiClient() == null ? null : user.getApiClient().getClientName());
+        record.put("apiClientIds", user.getApiClients().stream().map(ApiClient::getClientId).toList());
+        record.put("apiClientNames", user.getApiClients().stream().map(ApiClient::getClientName).sorted().toList());
         record.put("isActive", user.getIsActive());
         record.put("status", user.getStatus());
         record.put("rejectionReason", user.getRejectionReason());
@@ -112,7 +114,7 @@ public class AdminUserController {
 
     @PostMapping("/{id}/approve")
     public ResponseEntity<?> approveUser(@PathVariable Integer id,
-                                         @RequestBody(required = false) Map<String, String> body,
+                                         @RequestBody(required = false) Map<String, Object> body,
                                          Authentication authentication) {
         return userRepository.findById(id).map(user -> {
             if (!canGovern(authentication, user)) {
@@ -124,21 +126,21 @@ public class AdminUserController {
                         .body(Map.of("message", "Security Administrator creation requires controlled bootstrap"));
             }
             if (isApiUserRole(user.getRole())) {
-                ApiClient client = resolveActiveClient(body == null ? null : body.get("clientId"));
-                if (client == null) {
+                Set<ApiClient> clients = resolveActiveClients(body == null ? null : body.get("clientIds"));
+                if (clients.isEmpty()) {
                     return ResponseEntity.badRequest().body(Map.of(
                             "message", "An active API client mapping is required for ApiUser approval"));
                 }
-                user.setApiClient(client);
+                user.setApiClients(clients);
             }
-            String ipAllowlist = normalize(body == null ? null : body.get("vpnIp"));
+            String ipAllowlist = normalize(bodyValue(body, "vpnIp"));
             if (ipAllowlist != null && !isValidIpAllowlist(ipAllowlist)) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "message", "One or more IP/CIDR allowlist entries are invalid"));
             }
             user.setVpnIp(ipAllowlist);
             if (isDataManagerRole(user.getRole())) {
-                String certificateReference = normalize(body == null ? null : body.get("vpnCertificateReference"));
+                String certificateReference = normalize(bodyValue(body, "vpnCertificateReference"));
                 user.setVpnCertificateReference(certificateReference);
                 // Phase-I grace period: VPN details may be registered later. Do not
                 // claim VPN confirmation unless both controlled values were supplied.
@@ -153,7 +155,7 @@ public class AdminUserController {
             user.setPasswordResetRequired(true); 
             user.setCurrentSessionId(null);
             
-            String temporaryPassword = body == null ? null : body.get("tempPassword");
+            String temporaryPassword = bodyValue(body, "tempPassword");
             String policyViolation = PasswordPolicy.violation(temporaryPassword);
             if (policyViolation != null) {
                 return ResponseEntity.badRequest().body(Map.of("message", policyViolation));
@@ -193,11 +195,11 @@ public class AdminUserController {
 
     @PutMapping("/{id}/role")
     public ResponseEntity<?> updateRole(@PathVariable Integer id,
-                                        @RequestBody Map<String, String> body,
+                                        @RequestBody Map<String, Object> body,
                                         Authentication authentication) {
         return userRepository.findById(id).map(user -> {
             if (body.containsKey("role")) {
-                String requestedRole = body.get("role");
+                String requestedRole = bodyValue(body, "role");
                 if (isSecurityAdminRole(requestedRole)) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN)
                             .body(Map.of("message", "Security Administrator cannot be assigned through the portal"));
@@ -222,14 +224,14 @@ public class AdminUserController {
                     return ResponseEntity.badRequest().body(Map.of("message", "Unsupported role"));
                 }
                 if (isApiUserRole(requestedRole)) {
-                    ApiClient client = resolveActiveClient(body.get("clientId"));
-                    if (client == null) {
+                    Set<ApiClient> clients = resolveActiveClients(body.get("clientIds"));
+                    if (clients.isEmpty()) {
                         return ResponseEntity.badRequest().body(Map.of(
                                 "message", "An active API client mapping is required for the ApiUser role"));
                     }
-                    user.setApiClient(client);
+                    user.setApiClients(clients);
                 } else {
-                    user.setApiClient(null);
+                    user.getApiClients().clear();
                 }
                 user.setRole(requestedRole);
                 user.setCurrentSessionId(null);
@@ -364,14 +366,24 @@ public class AdminUserController {
         return role != null && role.equalsIgnoreCase("ApiUser");
     }
 
-    private ApiClient resolveActiveClient(String clientId) {
+    private Set<ApiClient> resolveActiveClients(Object clientIds) {
+        if (!(clientIds instanceof Collection<?> values) || values.isEmpty()) return Set.of();
+        Set<Long> ids = new LinkedHashSet<>();
         try {
-            return apiClientRepository.findById(Long.valueOf(clientId))
-                    .filter(client -> Boolean.TRUE.equals(client.getIsActive()))
-                    .orElse(null);
+            for (Object value : values) ids.add(Long.valueOf(String.valueOf(value)));
         } catch (RuntimeException exception) {
-            return null;
+            return Set.of();
         }
+        Set<ApiClient> clients = new LinkedHashSet<>(apiClientRepository.findAllById(ids));
+        if (clients.size() != ids.size() || clients.stream().anyMatch(c -> !Boolean.TRUE.equals(c.getIsActive()))) {
+            return Set.of();
+        }
+        return clients;
+    }
+
+    private String bodyValue(Map<String, Object> body, String key) {
+        Object value = body == null ? null : body.get(key);
+        return value == null ? null : String.valueOf(value);
     }
 
     private String normalize(String value) {

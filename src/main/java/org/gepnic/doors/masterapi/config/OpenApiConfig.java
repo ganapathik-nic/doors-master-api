@@ -5,6 +5,7 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -18,6 +19,9 @@ public class OpenApiConfig {
                         .title("DOORS Master API Engine")
                         .description("Data Orchestration and On-demand Report System")
                         .version("v3.0"))
+                // Always execute from the same origin that served Swagger UI.
+                // This avoids mixed-content failures behind an HTTPS proxy.
+                .addServersItem(new Server().url("/").description("Current DOORS API plane"))
                 .addSecurityItem(new SecurityRequirement().addList("X-API-KEY"))
                 .components(new Components()
                         .addSecuritySchemes("X-API-KEY", new SecurityScheme()

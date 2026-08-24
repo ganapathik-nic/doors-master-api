@@ -1,5 +1,8 @@
 server:
   port: 8052
+  # Generate external URLs from Nginx's X-Forwarded-* headers instead of the
+  # internal http://127.0.0.1:8052 connector.
+  forward-headers-strategy: framework
   max-http-header-size: 64KB # Handle large metadata/column counts
   tomcat:
     connection-timeout: 600000 # 10 minutes (matches your Apache ProxyTimeout)
@@ -81,8 +84,11 @@ doors:
       - "http://127.0.0.1:*"
       - "https://doorsadmin.doors.test"
       - "https://doorsexternal.doors.test"
+      - "https://doorsapi.doors.test"
       - "https://doorsadmin.doors.test:*"
       - "https://doorsexternal.doors.test:*"
+      - "https://doorsapi.doors.test:*"
+      - "https://doorsapi.gepnic.nic.in"
       - "http://demoetenders.tn.nic.in:*"
       - "https://demoetenders.tn.nic.in"
     rate-limit:

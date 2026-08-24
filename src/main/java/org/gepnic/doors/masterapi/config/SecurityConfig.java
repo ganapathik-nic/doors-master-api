@@ -75,6 +75,7 @@ public class SecurityConfig {
                     "/api/v1/master/gateway/orchestrate/**",
                     "/api/v1/master/gateway/telemetry/**",
                     "/api/v1/master/gateway/swagger-sessions/exchange",
+                    "/swagger/api/v1/master/gateway/swagger-sessions/exchange",
                     "/api/v1/master/reports/orchestrate/**"
                 )
             )
@@ -138,13 +139,23 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/master/gateway/telemetry/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/handshake")
                     .hasAuthority("ROLE_API_CLIENT")
-                .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/swagger-sessions/exchange").permitAll()
+                .requestMatchers(HttpMethod.POST,
+                    "/api/v1/master/gateway/swagger-sessions/exchange",
+                    "/swagger/api/v1/master/gateway/swagger-sessions/exchange"
+                ).permitAll()
+                .requestMatchers(HttpMethod.GET,
+                    "/swagger/session/exchange",
+                    "/session/exchange"
+                ).permitAll()
 
                 .requestMatchers(
                     "/v3/api-docs/**",
                     "/v3/api-docs.yaml",
                     "/swagger-resources/**",
-                    "/api/v1/master/gateway/swagger-sessions/contract/**"
+                    "/api/v1/master/gateway/swagger-sessions/contract/**",
+                    "/swagger/api/v1/master/gateway/swagger-sessions/contract/**",
+                    "/swagger/session/contract/**",
+                    "/session/contract/**"
                 ).hasAuthority("ROLE_SWAGGER_SESSION")
 
                 .requestMatchers(HttpMethod.GET, "/api/v1/master/gateway/template-contracts/**")
@@ -161,8 +172,14 @@ public class SecurityConfig {
                     "/doors-swagger.html",
                     "/swagger-autofill.js",
                     "/doors-swagger-bootstrap.js",
+                    "/doors-swagger-forge.js",
+                    "/swagger/doors-swagger-forge.js",
+                    "/doors-swagger-template-catalogue.js",
+                    "/swagger/doors-swagger-template-catalogue.js",
                     "/doors-swagger-crypto.js",
                     "/doors-template-catalogue.js",
+                    "/forge-1.3.2.min.js",
+                    "/swagger/forge-1.3.2.min.js",
                     "/vendor/**",
                     "/webjars/**"
                 ).permitAll()

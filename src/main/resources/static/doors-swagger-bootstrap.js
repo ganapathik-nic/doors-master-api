@@ -30,17 +30,45 @@
       return;
     }
     try {
-      var response = await fetch("api/v1/master/gateway/swagger-sessions/exchange", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ launchToken: launchToken })
-      });
-      var result = await response.json();
+      var prefixedGateway = "api/v1/master/gateway";
+      var rootGateway = "/api/v1/master/gateway";
+      var gatewayCandidates = window.location.pathname.indexOf("/swagger/") === 0
+        ? [prefixedGateway, rootGateway]
+        : [rootGateway];
+      var response;
+      var responseText = "";
+      var result;
+      var gatewayBase;
+
+      for (var index = 0; index < gatewayCandidates.length; index += 1) {
+        gatewayBase = gatewayCandidates[index];
+        response = await fetch(gatewayBase + "/swagger-sessions/exchange", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ launchToken: launchToken })
+        });
+        responseText = await response.text();
+        try {
+          result = JSON.parse(responseText);
+          break;
+        } catch (_) {
+          result = undefined;
+          // A proxy-generated HTML 403/404 means this deployment uses the other
+          // supported gateway mount. Never retry a JSON application response,
+          // because a successful single-use launch may already be consumed.
+          if (index + 1 >= gatewayCandidates.length ||
+              (response.status !== 403 && response.status !== 404)) {
+            throw new Error("Session exchange returned HTTP " + response.status +
+              " with a non-JSON response. Verify the Swagger proxy route.");
+          }
+        }
+      }
       if (!response.ok || !result.payload) throw new Error(result.message || "HTTP " + response.status);
 
       var sessionToken = result.payload.swaggerSessionToken;
+      window.doorsSwaggerGatewayBase = gatewayBase;
       window.doorsSwaggerLaunchConfig = Object.freeze(result.payload.configuration || {});
       window.doorsSwaggerSessionToken = sessionToken;
 
@@ -63,6 +91,7 @@
     } catch (error) {
       window.doorsSwaggerLaunchConfig = undefined;
       window.doorsSwaggerSessionToken = undefined;
+      window.doorsSwaggerGatewayBase = undefined;
       showFailure(error.message || error);
     }
   }

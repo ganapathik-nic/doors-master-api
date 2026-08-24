@@ -33,8 +33,11 @@ class PlaneRoutingFilterTest {
     @Test
     void adminPlaneCannotExposeMachineExecutionEndpoint() {
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/master/templates/list"));
+        assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN,
+                "/api/v1/master/gateway/api-clients/list-all-profiles"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/external/execute/report"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/master/gateway/orchestrate/report"));
+        assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/master/gateway/handshake"));
     }
 
     @Test

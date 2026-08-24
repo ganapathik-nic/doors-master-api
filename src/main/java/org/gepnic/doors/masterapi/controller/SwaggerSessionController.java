@@ -16,20 +16,18 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/v1")
 @RequiredArgsConstructor
 public class SwaggerSessionController {
 
     private final SwaggerSessionService swaggerSessionService;
     private final TemplateContractService templateContractService;
 
-    @PostMapping("/admin/swagger-sessions")
+    @PostMapping("/api/v1/admin/swagger-sessions")
     public ResponseEntity<ApiResponse<Map<String, Object>>> create(
             @RequestBody Map<String, Object> body,
             Authentication authentication,
@@ -57,7 +55,10 @@ public class SwaggerSessionController {
         }
     }
 
-    @PostMapping("/master/gateway/swagger-sessions/exchange")
+    @PostMapping({
+            "/api/v1/master/gateway/swagger-sessions/exchange",
+            "/swagger/api/v1/master/gateway/swagger-sessions/exchange"
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> exchange(
             @RequestBody Map<String, String> body,
             HttpServletRequest request) {
@@ -73,7 +74,29 @@ public class SwaggerSessionController {
         }
     }
 
-    @GetMapping("/master/gateway/swagger-sessions/contract")
+    @GetMapping({"/swagger/session/exchange", "/session/exchange"})
+    public ResponseEntity<ApiResponse<Map<String, Object>>> exchangePrefixedSwagger(
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
+            HttpServletRequest request) {
+        String prefix = "Bearer ";
+        if (authorization == null || !authorization.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            return error(HttpStatus.UNAUTHORIZED, "Swagger launch token is missing");
+        }
+        try {
+            Map<String, Object> session = swaggerSessionService.exchange(
+                    authorization.substring(prefix.length()).trim(), request.getHeader("User-Agent"));
+            return noStore(ApiResponse.success(session, "Swagger launch exchanged"));
+        } catch (SecurityException exception) {
+            return error(HttpStatus.UNAUTHORIZED, exception.getMessage());
+        }
+    }
+
+    @GetMapping({
+            "/api/v1/master/gateway/swagger-sessions/contract",
+            "/swagger/api/v1/master/gateway/swagger-sessions/contract",
+            "/swagger/session/contract",
+            "/session/contract"
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> selectedContract(
             @RequestHeader("X-DOORS-SWAGGER-SESSION") String sessionToken) {
         String uniqueName = swaggerSessionService.selectedUniqueName(sessionToken);
@@ -82,7 +105,12 @@ public class SwaggerSessionController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/master/gateway/swagger-sessions/contract/export")
+    @GetMapping({
+            "/api/v1/master/gateway/swagger-sessions/contract/export",
+            "/swagger/api/v1/master/gateway/swagger-sessions/contract/export",
+            "/swagger/session/contract/export",
+            "/session/contract/export"
+    })
     public ResponseEntity<Map<String, Object>> exportSelectedContract(
             @RequestHeader("X-DOORS-SWAGGER-SESSION") String sessionToken) {
         String uniqueName = swaggerSessionService.selectedUniqueName(sessionToken);

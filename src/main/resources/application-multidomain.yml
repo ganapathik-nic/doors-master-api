@@ -23,5 +23,7 @@ doors:
     allowed-origins:
       - "http://doorsadmin.doors.test"
       - "http://doorsexternal.doors.test"
+      - "https://doorsapi.doors.test"
       - "https://doorsadmin.gepnic.nic.in"
       - "https://doorsexternal.gepnic.nic.in"
+      - "https://doorsapi.gepnic.nic.in"

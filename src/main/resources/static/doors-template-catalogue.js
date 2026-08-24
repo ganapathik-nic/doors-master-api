@@ -40,7 +40,9 @@
     button.disabled = true;
     button.textContent = "Preparing export...";
     try {
-      var response = await fetch("api/v1/master/gateway/swagger-sessions/contract/export", { headers: {
+      var gatewayBase = window.doorsSwaggerGatewayBase || "/api/v1/master/gateway";
+      var response = await fetch(
+        gatewayBase + "/swagger-sessions/contract/export", { headers: {
           Accept: "application/json",
           "X-DOORS-SWAGGER-SESSION": window.doorsSwaggerSessionToken || ""
         } });
@@ -65,7 +67,9 @@
     var host = document.getElementById("doors-template-catalogue");
     if (!host) return;
     try {
-      var response = await fetch("api/v1/master/gateway/swagger-sessions/contract", {
+      var gatewayBase = window.doorsSwaggerGatewayBase || "/api/v1/master/gateway";
+      var response = await fetch(
+        gatewayBase + "/swagger-sessions/contract", {
         headers: {
           Accept: "application/json",
           "X-DOORS-SWAGGER-SESSION": window.doorsSwaggerSessionToken || ""

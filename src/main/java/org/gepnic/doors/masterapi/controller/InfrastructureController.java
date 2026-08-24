@@ -231,7 +231,7 @@ public class InfrastructureController {
         }
 
         String healthEndpoint = buildHealthEndpoint(agent);
-        String queryEndpoint = buildQueryEndpoint(agent);
+        String queryEndpoint = buildDatabaseProbeEndpoint(agent);
         boolean databaseConfigured = hasText(agent.getTargetDbHost()) &&
                 agent.getTargetDbPort() != null &&
                 hasText(agent.getTargetDbName()) &&
@@ -279,9 +279,10 @@ public class InfrastructureController {
             databaseChecked = true;
             try {
                 Map<String, Object> payload = new HashMap<>();
+                // Use the same agent route as a successful UI dry-run. Probing
+                // /execute here caused false DISCONNECTED results in deployments
+                // which expose /dry-run but do not expose the production route.
                 // Connectivity health must not depend on an application table.
-                // A missing/renamed gep_properites table previously marked a
-                // working database as DISCONNECTED even though JDBC was healthy.
                 payload.put("sql", "SELECT 1 AS health_count");
                 payload.put("params", Map.of());
                 payload.put("instanceCode", hasText(agent.getAgentInstanceCode())
@@ -351,10 +352,34 @@ public class InfrastructureController {
                 jvmOnline && (!databaseConfigured || databaseOnline) ? "ONLINE" : "DEGRADED"));
     }
 
-    private String buildQueryEndpoint(Agent agent) {
-        String healthEndpoint = buildHealthEndpoint(agent);
-        return healthEndpoint.substring(0, healthEndpoint.length() - "/status".length()) +
-                "/v1/agent/query/execute";
+    private String buildDatabaseProbeEndpoint(Agent agent) {
+        // Validate the configured destination before deriving an executable route.
+        buildHealthEndpoint(agent);
+
+        String baseUrl = agent.getBaseUrl().trim();
+        while (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+
+        String instanceCode = hasText(agent.getAgentInstanceCode())
+                ? agent.getAgentInstanceCode().trim()
+                : agent.getAgentId().trim();
+        String instanceSuffix = "/" + instanceCode;
+        if (baseUrl.toLowerCase(Locale.ROOT).endsWith(instanceSuffix.toLowerCase(Locale.ROOT))) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - instanceSuffix.length());
+        } else {
+            // Preserve a reverse-proxy /doorsagent prefix while removing only
+            // its trailing logical instance (for example /doorsagent/assam).
+            String lowerBaseUrl = baseUrl.toLowerCase(Locale.ROOT);
+            int routedInstanceIndex = lowerBaseUrl.lastIndexOf("/doorsagent/");
+            if (routedInstanceIndex >= 0 &&
+                    baseUrl.indexOf('/', routedInstanceIndex + "/doorsagent/".length()) < 0) {
+                baseUrl = baseUrl.substring(0,
+                        routedInstanceIndex + "/doorsagent".length());
+            }
+        }
+
+        return baseUrl + "/v1/agent/query/dry-run";
     }
 
     private String extractAgentDatabaseError(Object body) {

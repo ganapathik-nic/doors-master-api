@@ -14,4 +14,5 @@ import java.util.List;
 @ConfigurationProperties(prefix = "doors.security")
 public class DoorsSecurityProperties {
     private List<String> allowedOrigins = new ArrayList<>();
+    private boolean sessionCookieSecure = true;
 }

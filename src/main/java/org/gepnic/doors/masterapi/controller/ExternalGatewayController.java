@@ -23,6 +23,7 @@ import org.gepnic.doors.masterapi.service.ReportViewerService;
 import org.gepnic.doors.masterapi.service.TemplateContractService;
 import org.gepnic.doors.masterapi.service.ClientSpecificDataSegregationService;
 import org.gepnic.doors.masterapi.exception.EncryptionException;
+import org.gepnic.doors.masterapi.exception.DoorsApiException;
 import org.gepnic.doors.masterapi.util.EncryptionUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -402,6 +403,7 @@ public class ExternalGatewayController {
     public ResponseEntity<?> establishCryptographicHandshake(
             @Parameter(name = "X-API-KEY", description = "Client Authorization Passport Key", in = ParameterIn.HEADER, required = true)
             @RequestHeader("X-API-KEY") String apiKey,
+            HttpServletRequest servletRequest,
             @RequestBody Map<String, String> payload) {
         
         ApiClient client = apiClientRepository.findByApiKey(apiKey)
@@ -423,9 +425,51 @@ public class ExternalGatewayController {
             if (!(verifiedPublicKey instanceof java.security.interfaces.RSAPublicKey)) {
                 throw new IllegalArgumentException("Asset is not a valid RSA Public Specification format.");
             }
+
+            if (client.getClientPublicKey() == null || client.getClientPublicKey().isBlank()) {
+                throw new DoorsApiException(
+                        HttpStatus.CONFLICT,
+                        "DOORS-CLIENT-PUBLIC-KEY-NOT-REGISTERED",
+                        "https://doors.nic.in/problems/client-public-key-not-registered",
+                        "Client public key is not registered",
+                        "No public key is registered in DOORS for this API client.",
+                        false,
+                        Map.of("action", "Register client_public.pem against this API client before retrying."));
+            }
+
+            PublicKey registeredPublicKey = extractPublicKeyFromClientAsset(client.getClientPublicKey());
+            String presentedFingerprint = fingerprintPublicKey(verifiedPublicKey);
+            String registeredFingerprint = fingerprintPublicKey(registeredPublicKey);
+            servletRequest.setAttribute("X-DOORS-CLIENT", client.getClientName());
+
+            if (!java.security.MessageDigest.isEqual(
+                    verifiedPublicKey.getEncoded(), registeredPublicKey.getEncoded())) {
+                String traceId = "DOORS-TRC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+                servletRequest.setAttribute("X-DOORS-TRACE", traceId);
+                log.warn("[{}] DOORS-CLIENT-KEY-MISMATCH client=[{}] registeredFingerprint=[{}] presentedFingerprint=[{}]",
+                        traceId, client.getClientName(), registeredFingerprint, presentedFingerprint);
+                throw new DoorsApiException(
+                        HttpStatus.CONFLICT,
+                        "DOORS-CLIENT-KEY-MISMATCH",
+                        "https://doors.nic.in/problems/client-key-mismatch",
+                        "Client cryptographic identity mismatch",
+                        "The public key presented by the SDK does not match the public key registered in DOORS for this API key.",
+                        false,
+                        Map.of(
+                                "traceId", traceId,
+                                "registeredKeyFingerprint", registeredFingerprint,
+                                "presentedKeyFingerprint", presentedFingerprint,
+                                "action", "Export client_public.pem from the PKCS12 identity currently used by the SDK and register it against this API client."));
+            }
+
+            log.info("DOORS-CLIENT-KEY-VERIFIED client=[{}] fingerprint=[{}]", client.getClientName(), registeredFingerprint);
             
+        } catch (DoorsApiException e) {
+            keyRegistryCache.remove(apiKey);
+            keyExpiryTracker.remove(apiKey);
+            throw e;
         } catch (Exception e) {
-            log.error("💥 SYSTEM FAULT: Corrupted public key stream from API Key: [{}] -> {}", apiKey, e.getMessage());
+            log.error("💥 SYSTEM FAULT: Corrupted public key stream for client [{}] -> {}", client.getClientName(), e.getMessage());
             keyRegistryCache.remove(apiKey);
             keyExpiryTracker.remove(apiKey);
 
@@ -449,19 +493,51 @@ public class ExternalGatewayController {
         String traceId = payload.get("traceId");
         String faultType = payload.get("faultType");
         String errorMessage = payload.get("errorMessage");
+        String failureStage = payload.get("failureStage");
+        String clientFingerprint = payload.get("clientKeyFingerprint");
 
-        log.warn("🚨 CLIENT TELEMETRY ALERT: Fault reported for Trace ID [{}] -> Type: [{}], Detail: [{}]", 
-                traceId, faultType, errorMessage);
+        ApiClient client = apiClientRepository.findByApiKey(apiKey)
+                .orElseThrow(() -> new SecurityException("Unauthorized credentials token rejection."));
+
+        String registeredFingerprint = null;
+        boolean confirmedKeyMismatch = false;
+        try {
+            if (client.getClientPublicKey() != null && !client.getClientPublicKey().isBlank()) {
+                registeredFingerprint = fingerprintPublicKey(
+                        extractPublicKeyFromClientAsset(client.getClientPublicKey()));
+                confirmedKeyMismatch = clientFingerprint != null
+                        && !clientFingerprint.isBlank()
+                        && !registeredFingerprint.equalsIgnoreCase(clientFingerprint.trim());
+            }
+        } catch (Exception fingerprintError) {
+            log.error("Unable to resolve registered key fingerprint for client [{}]", client.getClientName(), fingerprintError);
+        }
+
+        String errorCode = classifyClientCryptoFault(failureStage, faultType, confirmedKeyMismatch);
+        String diagnosis = confirmedKeyMismatch
+                ? "Confirmed public/private key identity mismatch."
+                : diagnosisForClientCryptoFault(errorCode);
+
+        log.warn("🚨 CLIENT TELEMETRY ALERT trace=[{}] client=[{}] code=[{}] stage=[{}] type=[{}] " +
+                        "registeredFingerprint=[{}] clientFingerprint=[{}] detail=[{}]",
+                traceId, client.getClientName(), errorCode, failureStage, faultType,
+                registeredFingerprint, clientFingerprint, errorMessage);
 
         if (traceId != null && !traceId.isBlank()) {
             try {
                 String updateSql = "UPDATE unified_audit_logs " +
                                    "SET status_code = 500, " +
+                                   "    error_code = ?, " +
                                    "    error_message = ? " +
                                    "WHERE trace_id = ?";
                 
-                String formattedError = String.format("[CLIENT-SIDE FAULT] %s: %s", faultType, errorMessage);
-                int rowsUpdated = jdbcTemplate.update(updateSql, formattedError, traceId.trim());
+                String formattedError = String.format(
+                        "Client cryptographic validation failed. Stage=%s; Diagnosis=%s; Exception=%s: %s; " +
+                        "RegisteredKeyFingerprint=%s; ClientKeyFingerprint=%s",
+                        safeDiagnosticValue(failureStage), diagnosis, safeDiagnosticValue(faultType),
+                        safeDiagnosticValue(errorMessage), safeDiagnosticValue(registeredFingerprint),
+                        safeDiagnosticValue(clientFingerprint));
+                int rowsUpdated = jdbcTemplate.update(updateSql, errorCode, formattedError, traceId.trim());
                 
                 log.info("✅ TELEMETRY AUDIT UPDATED: Trace ID [{}] status changed to 500 (Updated Rows: {})", traceId, rowsUpdated);
 
@@ -471,6 +547,33 @@ public class ExternalGatewayController {
         }
 
         return ResponseEntity.ok(ApiResponse.success(null, "Telemetry fault logged successfully."));
+    }
+
+    private String classifyClientCryptoFault(String failureStage, String faultType, boolean confirmedKeyMismatch) {
+        if (confirmedKeyMismatch) return "DOORS-CLIENT-KEY-MISMATCH";
+        if ("RSA_SESSION_KEY_UNWRAP".equals(failureStage)) return "DOORS-RSA-KEY-UNWRAP-FAILED";
+        if ("AES_PAYLOAD_DECRYPTION".equals(failureStage)) return "DOORS-AES-PAYLOAD-DECRYPTION-FAILED";
+        if ("RESPONSE_SIGNATURE_VERIFICATION".equals(failureStage)) return "DOORS-RESPONSE-SIGNATURE-INVALID";
+        if (faultType != null && faultType.contains("Signature")) return "DOORS-RESPONSE-SIGNATURE-INVALID";
+        return "DOORS-CLIENT-CRYPTO-FAILED";
+    }
+
+    private String diagnosisForClientCryptoFault(String errorCode) {
+        return switch (errorCode) {
+            case "DOORS-RSA-KEY-UNWRAP-FAILED" ->
+                    "Key fingerprints match or could not be compared; check response key selection, RSA padding and encryptedKey integrity.";
+            case "DOORS-AES-PAYLOAD-DECRYPTION-FAILED" ->
+                    "RSA key unwrap completed; check IV, ciphertext integrity and AES transformation compatibility.";
+            case "DOORS-RESPONSE-SIGNATURE-INVALID" ->
+                    "Payload decrypted but the DOORS response signature could not be verified.";
+            default -> "An unclassified client cryptographic operation failed.";
+        };
+    }
+
+    private String safeDiagnosticValue(String value) {
+        if (value == null || value.isBlank()) return "UNAVAILABLE";
+        String sanitized = value.replaceAll("[\\r\\n\\t]", " ").trim();
+        return sanitized.length() > 500 ? sanitized.substring(0, 500) : sanitized;
     }
 
    // ========================================================================

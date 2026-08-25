@@ -252,7 +252,7 @@ public class AuditAspect {
 
             String apiKey = request.getHeader("X-API-KEY");
             if (apiKey != null) {
-                curl.append("  -H \"X-API-KEY: ").append(apiKey).append("\" \\\n");
+                curl.append("  -H \"X-API-KEY: ***REDACTED***\" \\\n");
             }
             curl.append("  -H \"Content-Type: application/json\" \\\n");
 

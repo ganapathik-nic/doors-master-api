@@ -215,12 +215,12 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/v1/external/data-pull/submit")
                     .hasAnyAuthority(
                         "External", "EXTERNAL", "ROLE_EXTERNAL",
-                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                        "ApiUser", "APIUSER", "ROLE_APIUSER"
                     )
                 .requestMatchers(HttpMethod.GET, "/api/v1/external/data-pull/my-list")
                     .hasAnyAuthority(
                         "External", "EXTERNAL", "ROLE_EXTERNAL",
-                        "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
+                        "ApiUser", "APIUSER", "ROLE_APIUSER"
                     )
                 .requestMatchers("/api/v1/external/data-pull/**").hasAnyAuthority(
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
@@ -235,6 +235,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/v1/master/agents/list/active")
                     .hasAnyAuthority(
                         "External", "EXTERNAL", "ROLE_EXTERNAL",
+                        "ApiUser", "APIUSER", "ROLE_APIUSER",
                         "Developer", "DEVELOPER", "ROLE_DEVELOPER",
                         "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                     )
@@ -295,6 +296,7 @@ public class SecurityConfig {
                         "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                     )
                 .requestMatchers("/api/v1/reports/**").hasAnyAuthority(
+                    "External", "EXTERNAL", "ROLE_EXTERNAL",
                     "DataViewer", "DATAVIEWER", "ROLE_DATAVIEWER",
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )

@@ -70,9 +70,11 @@ public class PlaneRoutingFilter extends OncePerRequestFilter {
                     "/api/v1/master/", "/api/v1/governance/", "/api/v1/reports/")
                     && (!path.startsWith("/api/v1/master/gateway/")
                     || path.startsWith("/api/v1/master/gateway/api-clients/"));
-            case EXTERNAL -> !path.startsWith("/api/v1/external/execute/") && startsWithAny(path,
-                    "/api/v1/auth/", "/api/v1/external/",
-                    "/api/v1/governance/requests", "/api/v1/reports/");
+            case EXTERNAL -> !path.startsWith("/api/v1/external/execute/") && (
+                    path.equals("/api/v1/master/agents/list/active")
+                    || startsWithAny(path,
+                            "/api/v1/auth/", "/api/v1/external/",
+                            "/api/v1/governance/requests", "/api/v1/reports/"));
             case API -> startsWithAny(path,
                     "/api/v1/master/gateway/", "/api/v1/external/execute/",
                     "/v3/api-docs", "/swagger", "/doors-swagger");

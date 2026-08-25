@@ -43,7 +43,9 @@ class PlaneRoutingFilterTest {
     @Test
     void externalPlaneCannotExposeAdministration() {
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/external/data-pull/submit"));
+        assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/master/agents/list/active"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/admin/users/list"));
+        assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/master/agents/list"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/external/execute/report"));
     }
 

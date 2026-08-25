@@ -21,5 +21,6 @@ public class RateLimitProperties {
     public static class Policy {
         private int capacity;
         private int refillMinutes;
+        private int penaltyMinutes;
     }
 }

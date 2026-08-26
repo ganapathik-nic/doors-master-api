@@ -14,6 +14,8 @@ public interface ApiClientRepository extends JpaRepository<ApiClient, Long> {
     // Used by ExternalConsumerController to find the client by their key
     Optional<ApiClient> findByApiKey(String apiKey);
 
+    Optional<ApiClient> findByClientNameIgnoreCaseAndIsActiveTrue(String clientName);
+
     List<ApiClient> findByIsActiveTrueOrderByClientNameAsc();
 
     // Used by ApiKeyInterceptor for high-performance security checks

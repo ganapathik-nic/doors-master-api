@@ -207,6 +207,52 @@ public class AgentExecutionService {
         return normalized.startsWith("SELECT") || normalized.startsWith("WITH");
     }
 
+    public Map<String, Object> evaluateDocumentEligibility(
+            String agentId,
+            org.gepnic.doors.masterapi.model.DocumentDownloadPolicy policy,
+            Map<String, Object> params) {
+        Agent agent = agentRepository.findById(agentId.trim())
+                .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
+                .orElseThrow(() -> new NoSuchElementException("Active Agent not found: " + agentId));
+        String endpoint = agentEndpoint(agent, "/v1/agent/query/document-eligibility");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("executionMode", policy.getExecutionMode());
+        payload.put("functionName", policy.getFunctionName());
+        payload.put("eligibilitySql", policy.getEligibilitySql());
+        List<String> functionArguments = new ArrayList<>();
+        policy.getAcceptedIdentifiers().forEach(value -> functionArguments.add(value.asText()));
+        payload.put("functionArguments", functionArguments);
+        payload.put("decisionColumn", policy.getDecisionColumn());
+        payload.put("allowedValue", policy.getAllowedValue());
+        payload.put("params", params);
+        payload.put("dbHost", agent.getTargetDbHost());
+        payload.put("dbPort", agent.getTargetDbPort());
+        payload.put("dbName", agent.getTargetDbName());
+        payload.put("dbUser", agent.getTargetDbUser());
+        try {
+            payload.put("dbPasswordSecure", agent.getTargetDbPassword() == null ? "" :
+                    EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(), "DOORS_VLAN_INTERNAL_SECRET_KEY_2026"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject(endpoint, payload, Map.class);
+            if (response == null) throw new IllegalStateException("Agent returned an empty eligibility response");
+            return response;
+        } catch (Exception exception) {
+            throw new IllegalStateException("Unable to evaluate document eligibility through Agent " + agentId, exception);
+        }
+    }
+
+    private String agentEndpoint(Agent agent, String path) {
+        String base = agent.getBaseUrl() == null ? "" : agent.getBaseUrl().trim().replaceAll("/+$", "");
+        if (!base.matches("https?://[^/]+.*")) throw new IllegalArgumentException("Malformed Agent base URL");
+        String instanceCode = agent.getAgentInstanceCode() == null ? "" : agent.getAgentInstanceCode().trim();
+        String routingSuffix = !instanceCode.isBlank() ? instanceCode : agent.getAgentId();
+        if (routingSuffix != null && !routingSuffix.isBlank()
+                && base.toLowerCase(Locale.ROOT).endsWith(("/" + routingSuffix).toLowerCase(Locale.ROOT))) {
+            base = base.substring(0, base.length() - routingSuffix.length() - 1);
+        }
+        return base + path;
+    }
+
     private String stripMatchingSqlQuotes(String value) {
         if (value == null || value.length() < 2) return value;
         char first = value.charAt(0);

@@ -73,6 +73,7 @@ public class SecurityConfig {
                     "/api/v1/external/execute/**",
                     "/api/v1/master/gateway/handshake",
                     "/api/v1/master/gateway/orchestrate/**",
+                    "/api/v1/master/gateway/documents/**",
                     "/api/v1/master/gateway/telemetry/**",
                     "/api/v1/master/gateway/swagger-sessions/exchange",
                     "/swagger/api/v1/master/gateway/swagger-sessions/exchange",
@@ -136,6 +137,8 @@ public class SecurityConfig {
                 )
                 .requestMatchers("/api/v1/master/reports/orchestrate/**").permitAll()
                 .requestMatchers("/api/v1/master/gateway/orchestrate/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/documents/**")
+                    .hasAuthority("ROLE_API_CLIENT")
                 .requestMatchers("/api/v1/master/gateway/telemetry/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/handshake")
                     .hasAuthority("ROLE_API_CLIENT")

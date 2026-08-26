@@ -37,13 +37,19 @@ public class SwaggerSessionController {
             String uniqueName = String.valueOf(body.get("uniqueName"));
             @SuppressWarnings("unchecked")
             Map<String, Object> requestBody = (Map<String, Object>) body.get("body");
+            Map<String, String> swaggerTarget = Map.of();
+            if (body.get("swaggerTarget") instanceof Map<?, ?> rawTarget) {
+                swaggerTarget = rawTarget.entrySet().stream().collect(java.util.stream.Collectors.toMap(
+                        entry -> String.valueOf(entry.getKey()), entry -> String.valueOf(entry.getValue())));
+            }
             Map<String, Object> launch = swaggerSessionService.createLaunch(
                     clientId,
                     uniqueName,
                     requestBody,
                     body.get("keyFingerprint") == null ? null : String.valueOf(body.get("keyFingerprint")),
                     authentication.getName(),
-                    request.getHeader("User-Agent")
+                    request.getHeader("User-Agent"),
+                    swaggerTarget
             );
             return noStore(ApiResponse.success(launch, "Single-use Swagger launch created"));
         } catch (SecurityException exception) {

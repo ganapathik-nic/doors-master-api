@@ -43,6 +43,12 @@ public class SwaggerSessionService {
 
     public Map<String, Object> createLaunch(Long clientId, String uniqueName, Map<String, Object> requestBody,
                                              String keyFingerprint, String actor, String userAgent) {
+        return createLaunch(clientId, uniqueName, requestBody, keyFingerprint, actor, userAgent, Map.of());
+    }
+
+    public Map<String, Object> createLaunch(Long clientId, String uniqueName, Map<String, Object> requestBody,
+                                             String keyFingerprint, String actor, String userAgent,
+                                             Map<String, String> swaggerTarget) {
         cleanupExpired();
 
         ApiClient client = apiClientRepository.findById(clientId)
@@ -69,6 +75,28 @@ public class SwaggerSessionService {
         configuration.put("body", requestBody == null ? Map.of() : requestBody);
         configuration.put("keyFingerprint", keyFingerprint == null ? "" : keyFingerprint.trim());
         configuration.put("keySource", client.getClientPublicKey() == null ? "RUNTIME_REGISTRY" : "DATABASE");
+        if (swaggerTarget != null && !swaggerTarget.isEmpty()) {
+            String operationPath = swaggerTarget.getOrDefault("operationPath", "").trim();
+            String pathParameterName = swaggerTarget.getOrDefault("pathParameterName", "").trim();
+            String pathValue = swaggerTarget.getOrDefault("pathValue", "").trim();
+            String secondPathParameterName = swaggerTarget.getOrDefault("secondPathParameterName", "").trim();
+            String secondPathValue = swaggerTarget.getOrDefault("secondPathValue", "").trim();
+            if (!operationPath.startsWith("/api/v1/master/gateway/documents/services/")
+                    || !"serviceName".equals(pathParameterName)
+                    || !pathValue.matches("[A-Za-z0-9_-]+")
+                    || (!secondPathParameterName.isEmpty() && !"queryName".equals(secondPathParameterName))
+                    || (!secondPathValue.isEmpty() && !secondPathValue.matches("[A-Za-z0-9_-]+"))) {
+                throw new IllegalArgumentException("Invalid document Swagger target");
+            }
+            Map<String, Object> documentBody = new LinkedHashMap<>(requestBody == null ? Map.of() : requestBody);
+            documentBody.remove("agentIds");
+            configuration.put("body", documentBody);
+            configuration.put("operationPath", operationPath);
+            configuration.put("pathParameterName", pathParameterName);
+            configuration.put("pathValue", pathValue);
+            configuration.put("secondPathParameterName", secondPathParameterName);
+            configuration.put("secondPathValue", secondPathValue);
+        }
 
         String rawToken = randomToken();
         launchGrants.put(hash(rawToken), new LaunchGrant(expiresAt, actor, userAgentHash(userAgent), configuration));

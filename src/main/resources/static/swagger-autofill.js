@@ -31,6 +31,11 @@
         const launchConfig = window.doorsSwaggerLaunchConfig || {};
         const apiKey = launchConfig.apiKey;
         const uniqueName = launchConfig.uniqueName;
+        const pathParameterName = launchConfig.pathParameterName || "uniqueName";
+        const pathValue = launchConfig.pathValue || uniqueName;
+        const secondPathParameterName = launchConfig.secondPathParameterName;
+        const secondPathValue = launchConfig.secondPathValue;
+        const operationPath = launchConfig.operationPath;
         const rawBody = launchConfig.body ? JSON.stringify(launchConfig.body) : null;
 
         if (!apiKey && !uniqueName && !rawBody) {
@@ -45,30 +50,42 @@
             fillAttempts++;
 
             // 1. Click "Try it out" button
-            const tryBtn = document.querySelector('.btn.try-out__btn');
-            if (tryBtn && !document.querySelector('.btn.execute')) {
+            const operationBlock = operationPath
+                ? document.querySelector('.opblock[data-path="' + operationPath + '"]')
+                : document;
+            const tryBtn = operationBlock && operationBlock.querySelector('.btn.try-out__btn');
+            if (tryBtn && !operationBlock.querySelector('.btn.execute')) {
                 tryBtn.click();
             }
 
             // 2. Target Exact Inputs
-            const pathInput = document.querySelector('input[placeholder="uniqueName"]') ||
-                              document.querySelector('tr[data-param-name="uniqueName"] input');
+            const pathInput = operationBlock && (operationBlock.querySelector('input[placeholder="' + pathParameterName + '"]') ||
+                              operationBlock.querySelector('tr[data-param-name="' + pathParameterName + '"] input'));
+            const secondPathInput = operationBlock && secondPathParameterName &&
+                              (operationBlock.querySelector('input[placeholder="' + secondPathParameterName + '"]') ||
+                               operationBlock.querySelector('tr[data-param-name="' + secondPathParameterName + '"] input'));
 
-            const apiKeyInput = document.querySelector('input[placeholder="X-API-KEY"]') ||
-                                document.querySelector('tr[data-param-name="X-API-KEY"] input');
+            const apiKeyInput = operationBlock && (operationBlock.querySelector('input[placeholder="X-API-KEY"]') ||
+                                operationBlock.querySelector('tr[data-param-name="X-API-KEY"] input'));
 
-            const bodyInput = document.querySelector('textarea.body-param__text') ||
-                              document.querySelector('.body-param__text') ||
-                              document.querySelector('textarea');
+            const bodyInput = operationBlock && (operationBlock.querySelector('textarea.body-param__text') ||
+                              operationBlock.querySelector('.body-param__text') ||
+                              operationBlock.querySelector('textarea'));
 
             let pathDone = false;
+            let secondPathDone = false;
             let keyDone = false;
             let bodyDone = false;
 
-            if (pathInput && !pathInput.disabled && uniqueName) {
-                setReactValue(pathInput, uniqueName);
+            if (pathInput && !pathInput.disabled && pathValue) {
+                setReactValue(pathInput, pathValue);
                 pathDone = true;
-            } else if (!uniqueName) pathDone = true;
+            } else if (!pathValue) pathDone = true;
+
+            if (secondPathInput && !secondPathInput.disabled && secondPathValue) {
+                setReactValue(secondPathInput, secondPathValue);
+                secondPathDone = true;
+            } else if (!secondPathValue) secondPathDone = true;
 
             if (apiKeyInput && !apiKeyInput.disabled && apiKey) {
                 setReactValue(apiKeyInput, apiKey);
@@ -85,9 +102,9 @@
                 bodyDone = true;
             } else if (!rawBody) bodyDone = true;
 
-            if ((pathDone && keyDone && bodyDone) || fillAttempts >= 40) {
+            if ((pathDone && secondPathDone && keyDone && bodyDone) || fillAttempts >= 40) {
                 clearInterval(timer);
-                if (pathDone && keyDone && bodyDone) {
+                if (pathDone && secondPathDone && keyDone && bodyDone) {
                     console.log("🎉 [DOORS-SWAGGER] Auto-fill executed successfully!");
                 }
             }

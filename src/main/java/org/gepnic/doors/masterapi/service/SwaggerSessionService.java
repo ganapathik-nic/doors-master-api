@@ -30,6 +30,7 @@ public class SwaggerSessionService {
     private final ApiClientRepository apiClientRepository;
     private final ClientQueryMapRepository mappingRepository;
     private final SqlTemplateRepository templateRepository;
+    private final org.gepnic.doors.masterapi.repository.DocumentServiceRegistrationRepository documentServiceRepository;
     private final JdbcTemplate jdbcTemplate;
 
     private final Map<String, LaunchGrant> launchGrants = new ConcurrentHashMap<>();
@@ -63,10 +64,12 @@ public class SwaggerSessionService {
                 .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
                 .orElseThrow(() -> new NoSuchElementException("Active approved template not found"));
 
-        if (!mappingRepository.existsByClientIdAndQueryId(clientId, template.getQueryId())) {
+        boolean documentTarget = swaggerTarget != null && !swaggerTarget.isEmpty();
+        if (!documentTarget && !mappingRepository.existsByClientIdAndQueryId(clientId, template.getQueryId())) {
             throw new SecurityException("The API client is not authorized for the selected template");
         }
-        validateAgents(client, requestBody);
+        if (documentTarget) validateDocumentTarget(client, template, requestBody, swaggerTarget);
+        else validateAgents(client, requestBody);
 
         Instant expiresAt = Instant.now().plusSeconds(launchTtlSeconds);
         Map<String, Object> configuration = new LinkedHashMap<>();
@@ -96,6 +99,13 @@ public class SwaggerSessionService {
             configuration.put("pathValue", pathValue);
             configuration.put("secondPathParameterName", secondPathParameterName);
             configuration.put("secondPathValue", secondPathValue);
+            documentServiceRepository.findByServiceNameIgnoreCase(pathValue).ifPresent(value -> {
+                if (value.getDocumentDownloadPolicyCode() != null
+                        && !value.getDocumentDownloadPolicyCode().isBlank()) {
+                    configuration.put("documentDownloadPolicyCode", value.getDocumentDownloadPolicyCode());
+                }
+                configuration.put("payloadMode", value.getPayloadMode());
+            });
         }
 
         String rawToken = randomToken();
@@ -165,6 +175,27 @@ public class SwaggerSessionService {
         boolean valid = !requestedAgents.isEmpty()
                 && requestedAgents.stream().allMatch(value -> allowedAgents.contains(String.valueOf(value)));
         if (!valid) throw new SecurityException("The API client is not authorized for one or more selected agents");
+    }
+
+    private void validateDocumentTarget(ApiClient client, SqlTemplate template,
+                                        Map<String, Object> requestBody, Map<String, String> swaggerTarget) {
+        String serviceName = swaggerTarget.getOrDefault("pathValue", "").trim();
+        String queryName = swaggerTarget.getOrDefault("secondPathValue", "").trim();
+        var registration = documentServiceRepository.findByServiceNameIgnoreCase(serviceName)
+                .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
+                .orElseThrow(() -> new NoSuchElementException("Active document service not found"));
+        if (!registration.getManifestClientName().equalsIgnoreCase(client.getClientName())) {
+            throw new SecurityException("Swagger client identity does not match the ClientName mapped to the document service");
+        }
+        if (!registration.getManifestQueryName().equalsIgnoreCase(template.getUniqueName())
+                || !registration.getManifestQueryName().equalsIgnoreCase(queryName)) {
+            throw new SecurityException("Swagger query does not match the Query Name mapped to the document service");
+        }
+        if (requestBody == null || !(requestBody.get("agentIds") instanceof List<?> agents)
+                || agents.size() != 1
+                || !registration.getAgentId().equals(String.valueOf(agents.get(0)))) {
+            throw new SecurityException("Swagger agent does not match the GePNIC Instance mapped to the document service");
+        }
     }
 
     private void cleanupExpired() {

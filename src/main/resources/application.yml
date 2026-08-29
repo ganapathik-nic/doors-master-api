@@ -48,6 +48,11 @@ spring:
 
 # Portal Registry Configuration
 doors:
+  documents:
+    curl-executable: ${DOORS_CURL_EXECUTABLE:curl}
+    # nicgep_docs_webservice expects SHA-512(downloadId|docCode|fileName|packetType|secret)#clientId.
+    authorization-secret: ${DOORS_DOCUMENT_AUTH_SECRET:SecretKeyForReports}
+    authorization-client-id: ${DOORS_DOCUMENT_AUTH_CLIENT_ID:101}
   # Canonical hostname-to-plane assignments. PlaneRoutingFilter uses these
   # values to decide which API families may be exposed on each host.
   planes:
@@ -132,6 +137,7 @@ springdoc:
     enabled: true
   paths-to-match:
     - /api/v1/master/gateway/orchestrate/**
+    - /api/v1/master/gateway/documents/**
   show-actuator: false
   packages-to-scan: org.gepnic.doors.masterapi.controller
   swagger-ui:

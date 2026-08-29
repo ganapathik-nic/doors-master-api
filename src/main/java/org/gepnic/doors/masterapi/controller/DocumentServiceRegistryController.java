@@ -46,4 +46,12 @@ public class DocumentServiceRegistryController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> deactivate(@PathVariable Long serviceId) {
         return ResponseEntity.ok(ApiResponse.success(service.setActive(serviceId, false), "Document service deactivated"));
     }
+
+    @PostMapping("/{serviceId}/payload-mode")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> setPayloadMode(
+            @PathVariable Long serviceId, @RequestBody Map<String, Object> body) {
+        return ResponseEntity.ok(ApiResponse.success(
+                service.setPayloadMode(serviceId, String.valueOf(body.get("payloadMode"))),
+                "Document service payload mode updated"));
+    }
 }

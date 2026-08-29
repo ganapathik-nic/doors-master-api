@@ -86,6 +86,15 @@ public class DocumentServiceRegistryService {
         return toMap(repository.save(registration));
     }
 
+    @Transactional
+    public Map<String, Object> setPayloadMode(Long id, String payloadMode) {
+        DocumentServiceRegistration registration = require(id);
+        String normalized = normalizePayloadMode(payloadMode);
+        validatePayloadCrypto(registration, normalized);
+        registration.setPayloadMode(normalized);
+        return toMap(repository.save(registration));
+    }
+
     private void apply(DocumentServiceRegistration value, Map<String, Object> body, boolean creating) {
         if (creating || body.containsKey("agentId")) value.setAgentId(required(body.get("agentId"), "agentId"));
         if (creating || body.containsKey("serviceName")) value.setServiceName(required(body.get("serviceName"), "serviceName"));
@@ -96,6 +105,8 @@ public class DocumentServiceRegistryService {
         if (creating || body.containsKey("documentDownloadPolicyCode")) value.setDocumentDownloadPolicyCode(
                 required(body.get("documentDownloadPolicyCode"), "documentDownloadPolicyCode"));
         if (body.containsKey("accessMode")) value.setAccessMode(required(body.get("accessMode"), "accessMode").toUpperCase(Locale.ROOT));
+        if (body.containsKey("payloadMode")) value.setPayloadMode(
+                normalizePayloadMode(required(body.get("payloadMode"), "payloadMode")));
         if (body.containsKey("connectTimeoutMs")) value.setConnectTimeoutMs(integer(body.get("connectTimeoutMs"), "connectTimeoutMs"));
         if (body.containsKey("readTimeoutMs")) value.setReadTimeoutMs(integer(body.get("readTimeoutMs"), "readTimeoutMs"));
         if (body.containsKey("verifyTls")) value.setVerifyTls(Boolean.valueOf(String.valueOf(body.get("verifyTls"))));
@@ -134,6 +145,8 @@ public class DocumentServiceRegistryService {
                             "Unknown or inactive manifest ClientName: " + value.getManifestClientName()));
         }
         if (!Set.of("MASTER_DIRECT", "AGENT_PROXY").contains(value.getAccessMode())) throw new IllegalArgumentException("Access mode must be MASTER_DIRECT or AGENT_PROXY");
+        normalizePayloadMode(value.getPayloadMode());
+        validatePayloadCrypto(value, value.getPayloadMode());
         try {
             URI uri = URI.create(value.getBaseUrl());
             if (!Set.of("http", "https").contains(uri.getScheme()) || uri.getHost() == null) throw new IllegalArgumentException();
@@ -162,6 +175,7 @@ public class DocumentServiceRegistryService {
         result.put("manifestClientName", value.getManifestClientName());
         result.put("documentDownloadPolicyCode", value.getDocumentDownloadPolicyCode());
         result.put("accessMode", value.getAccessMode());
+        result.put("payloadMode", value.getPayloadMode());
         result.put("connectTimeoutMs", value.getConnectTimeoutMs());
         result.put("readTimeoutMs", value.getReadTimeoutMs());
         result.put("verifyTls", value.getVerifyTls());
@@ -185,5 +199,29 @@ public class DocumentServiceRegistryService {
     private int integer(Object value, String field) {
         try { return Integer.parseInt(required(value, field)); }
         catch (NumberFormatException exception) { throw new IllegalArgumentException(field + " must be an integer"); }
+    }
+
+    private String normalizePayloadMode(String value) {
+        String normalized = required(value, "payloadMode").toUpperCase(Locale.ROOT);
+        if (!Set.of("AES", "PLAIN_TEXT").contains(normalized)) {
+            throw new IllegalArgumentException("Payload mode must be AES or PLAIN_TEXT");
+        }
+        return normalized;
+    }
+
+    private void validatePayloadCrypto(DocumentServiceRegistration registration, String payloadMode) {
+        if (!"AES".equals(payloadMode)) return;
+        if (registration.getManifestClientName() == null || registration.getManifestClientName().isBlank()) {
+            throw new IllegalArgumentException("AES payload mode requires a mapped manifest ClientName");
+        }
+        var client = apiClientRepository.findByClientNameIgnoreCaseAndIsActiveTrue(
+                        registration.getManifestClientName())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AES payload mode requires an active mapped API Client"));
+        if (client.getClientPublicKey() == null || client.getClientPublicKey().isBlank()) {
+            throw new IllegalArgumentException(
+                    "AES payload mode requires a public key for ClientName "
+                            + registration.getManifestClientName());
+        }
     }
 }

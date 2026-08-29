@@ -5,6 +5,46 @@
   var lastEncryptedEnvelope = null;
   var responseDecryptAction = null;
   var decryptedOutput = null;
+  var swaggerObserver = null;
+
+  function isPlainDocumentService() {
+    var launchConfig = window.doorsSwaggerLaunchConfig || {};
+    return Boolean(launchConfig.operationPath) && launchConfig.payloadMode !== "AES";
+  }
+
+  function setDecryptedActionsEnabled(enabled) {
+    var copyButton = document.getElementById("doors-copy-decrypted-button");
+    var downloadButton = document.getElementById("doors-download-decrypted-button");
+    if (copyButton) copyButton.disabled = !enabled;
+    if (downloadButton) downloadButton.disabled = !enabled;
+  }
+
+  function decryptedText() {
+    var output = document.getElementById("doors-response-decrypted-output") ||
+      document.getElementById("doors-decrypted-output") || decryptedOutput;
+    return output && !output.hidden ? output.textContent : "";
+  }
+
+  async function copyDecryptedData() {
+    var text = decryptedText();
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    setStatus("Decrypted JSON copied to clipboard", "ready");
+  }
+
+  function downloadDecryptedData() {
+    var text = decryptedText();
+    if (!text) return;
+    var blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "doors-decrypted-response-" + Date.now() + ".json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+    setStatus("Decrypted JSON downloaded", "ready");
+  }
 
   function setStatus(message, state) {
     var status = document.getElementById("doors-crypto-status");
@@ -123,6 +163,14 @@
     if (!panel) return;
     var wrappers = document.querySelectorAll(".execute-wrapper");
     var wrapper = wrappers.length ? wrappers[wrappers.length - 1] : null;
+    if (isPlainDocumentService()) {
+      panel.hidden = true;
+      if (wrapper) {
+        var plainExecuteButton = wrapper.querySelector("button.execute");
+        if (plainExecuteButton) plainExecuteButton.textContent = "Fetch Data";
+      }
+      return;
+    }
     if (wrapper) {
       panel.hidden = false;
       if (panel.previousElementSibling !== wrapper) {
@@ -170,6 +218,7 @@
   }
 
   function placeDecryptButtonBelowResponseHeaders() {
+    if (isPlainDocumentService()) return;
     var wrappers = document.querySelectorAll(".responses-wrapper");
     var wrapper = wrappers.length ? wrappers[wrappers.length - 1] : null;
     if (!wrapper || !lastEncryptedEnvelope) return;
@@ -199,6 +248,24 @@
       button.textContent = "Decrypt Data";
       button.addEventListener("click", decryptLastResponse);
       action.appendChild(button);
+
+      var copyButton = document.createElement("button");
+      copyButton.id = "doors-copy-decrypted-button";
+      copyButton.className = "doors-decrypt-button doors-decrypted-action-button";
+      copyButton.type = "button";
+      copyButton.textContent = "Copy";
+      copyButton.disabled = true;
+      copyButton.addEventListener("click", copyDecryptedData);
+      action.appendChild(copyButton);
+
+      var downloadButton = document.createElement("button");
+      downloadButton.id = "doors-download-decrypted-button";
+      downloadButton.className = "doors-decrypt-button doors-decrypted-action-button";
+      downloadButton.type = "button";
+      downloadButton.textContent = "Download JSON";
+      downloadButton.disabled = true;
+      downloadButton.addEventListener("click", downloadDecryptedData);
+      action.appendChild(downloadButton);
 
       var inlineOutput = document.createElement("pre");
       inlineOutput.id = "doors-response-decrypted-output";
@@ -249,6 +316,7 @@
       var plaintext = forge.util.decodeUtf8(decipher.output.getBytes());
       output.textContent = JSON.stringify(JSON.parse(plaintext), null, 2);
       output.hidden = false;
+      setDecryptedActionsEnabled(true);
       setStatus("Encrypted response decrypted successfully", "ready");
     } catch (error) {
       var failureMessage = "Response decryption failed: " + (error.message || error);
@@ -256,6 +324,7 @@
         output.textContent = failureMessage;
         output.hidden = false;
       }
+      setDecryptedActionsEnabled(false);
       setStatus(failureMessage, "error");
     }
   }
@@ -351,6 +420,7 @@
     }
 
     lastEncryptedEnvelope = envelope;
+    setDecryptedActionsEnabled(false);
     var previousDecryptedOutput = document.getElementById("doors-decrypted-output") || decryptedOutput;
     if (previousDecryptedOutput) {
       previousDecryptedOutput.textContent = "";
@@ -389,11 +459,26 @@
     if (requestButton) requestButton.addEventListener("click", buildEncryptedRequestWrapper);
 
     var swaggerRoot = document.getElementById("swagger-ui");
-    var swaggerObserver = new MutationObserver(function () {
+    swaggerObserver = new MutationObserver(function () {
+      if (isPlainDocumentService()) {
+        var plainPanel = document.getElementById("doors-crypto-panel");
+        if (plainPanel) plainPanel.hidden = true;
+        return;
+      }
       placeCryptoPanelBelowExecute();
       placeDecryptButtonBelowResponseHeaders();
     });
     swaggerObserver.observe(swaggerRoot, { childList: true, subtree: true });
     placeCryptoPanelBelowExecute();
+  });
+
+  window.addEventListener("doors-swagger-ready", function () {
+    if (!isPlainDocumentService()) return;
+    if (swaggerObserver) {
+      swaggerObserver.disconnect();
+      swaggerObserver = null;
+    }
+    var panel = document.getElementById("doors-crypto-panel");
+    if (panel) panel.hidden = true;
   });
 })();

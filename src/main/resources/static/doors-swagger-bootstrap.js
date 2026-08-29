@@ -71,9 +71,43 @@
       window.doorsSwaggerGatewayBase = gatewayBase;
       window.doorsSwaggerLaunchConfig = Object.freeze(result.payload.configuration || {});
       window.doorsSwaggerSessionToken = sessionToken;
+      if (window.doorsSwaggerLaunchConfig.operationPath &&
+          window.doorsSwaggerLaunchConfig.payloadMode !== "AES") {
+        var cryptoPanel = document.getElementById("doors-crypto-panel");
+        if (cryptoPanel) cryptoPanel.hidden = true;
+      }
+
+      var openApiResponse = await fetch("v3/api-docs", {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-DOORS-SWAGGER-SESSION": sessionToken
+        }
+      });
+      if (!openApiResponse.ok) {
+        throw new Error("Unable to load the DOORS OpenAPI definition: HTTP " + openApiResponse.status);
+      }
+      var openApiSpec = await openApiResponse.json();
+      var selectedOperationPath = window.doorsSwaggerLaunchConfig.operationPath ||
+        "/api/v1/master/gateway/orchestrate/{uniqueName}";
+      var selectedPathItem = openApiSpec.paths && openApiSpec.paths[selectedOperationPath];
+      if (!selectedPathItem) {
+        throw new Error("The selected DOORS operation is not published in OpenAPI: " + selectedOperationPath);
+      }
+      openApiSpec.paths = Object.fromEntries([[selectedOperationPath, selectedPathItem]]);
+      if (window.doorsSwaggerLaunchConfig.operationPath) {
+        openApiSpec.tags = (openApiSpec.tags || []).filter(function (tag) {
+          return tag && tag.name === "document-download-gateway-controller";
+        });
+      } else {
+        openApiSpec.tags = (openApiSpec.tags || []).filter(function (tag) {
+          return tag && tag.name !== "document-download-gateway-controller";
+        });
+      }
 
       window.ui = SwaggerUIBundle({
-        url: "v3/api-docs",
+        spec: openApiSpec,
         dom_id: "#swagger-ui",
         deepLinking: true,
         docExpansion: "full",
@@ -82,12 +116,19 @@
         requestInterceptor: function (request) {
           request.headers = request.headers || {};
           request.headers["X-DOORS-SWAGGER-SESSION"] = sessionToken;
+          if (window.doorsSwaggerLaunchConfig.operationPath &&
+              window.doorsSwaggerLaunchConfig.payloadMode === "AES" &&
+              request.url && request.url.indexOf("/documents/services/") >= 0) {
+            request.headers["X-DOORS-REQUIRE-ENCRYPTED-RESPONSE"] = "true";
+          }
           return request;
         },
         responseInterceptor: window.doorsDecryptResponse,
+        onComplete: function () {
+          window.dispatchEvent(new CustomEvent("doors-swagger-ready"));
+        },
         layout: "StandaloneLayout"
       });
-      window.dispatchEvent(new CustomEvent("doors-swagger-ready"));
     } catch (error) {
       window.doorsSwaggerLaunchConfig = undefined;
       window.doorsSwaggerSessionToken = undefined;

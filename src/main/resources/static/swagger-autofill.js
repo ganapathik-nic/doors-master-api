@@ -51,7 +51,8 @@
 
             // 1. Click "Try it out" button
             const operationBlock = operationPath
-                ? document.querySelector('.opblock[data-path="' + operationPath + '"]')
+                ? (document.querySelector('.opblock[data-path="' + operationPath + '"]') ||
+                   document.querySelector('#swagger-ui .opblock'))
                 : document;
             const tryBtn = operationBlock && operationBlock.querySelector('.btn.try-out__btn');
             if (tryBtn && !operationBlock.querySelector('.btn.execute')) {

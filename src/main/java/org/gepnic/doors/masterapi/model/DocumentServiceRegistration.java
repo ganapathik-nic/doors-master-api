@@ -41,6 +41,9 @@ public class DocumentServiceRegistration extends DoorsBaseEntity {
     @Column(name = "access_mode", nullable = false, length = 30)
     private String accessMode = "MASTER_DIRECT";
 
+    @Column(name = "payload_mode", nullable = false, length = 20)
+    private String payloadMode = "PLAIN_TEXT";
+
     @Column(name = "connect_timeout_ms", nullable = false)
     private Integer connectTimeoutMs = 10000;
 

@@ -81,6 +81,14 @@ public class ReportViewerService {
     }
 
     public ReportResult executeReport(ReportExecutionRequest request) {
+        return executeReport(request, false);
+    }
+
+    public ReportResult executeDocumentReport(ReportExecutionRequest request) {
+        return executeReport(request, true);
+    }
+
+    private ReportResult executeReport(ReportExecutionRequest request, boolean registryAuthorizedDocumentRequest) {
         List<Map<String, Object>> aggregatedResults = new ArrayList<>();
         List<String> offlineAgents = new ArrayList<>();
         Map<String, String> nodeErrors = new LinkedHashMap<>();
@@ -98,7 +106,9 @@ public class ReportViewerService {
             validateParameters(request.getParams());
 
             // 🛡️ 2. Security Scan: Unauthorized Agents
-            List<String> targetAgentIds = resolveAgents(request);
+            List<String> targetAgentIds = registryAuthorizedDocumentRequest
+                    ? resolveRegisteredDocumentAgent(request)
+                    : resolveAgents(request);
 
             String sql = resolveSql(request);
             Map<String, Object> sanitizedParams = sanitizeParams(request.getParams());
@@ -409,6 +419,14 @@ public class ReportViewerService {
             sanitized.put(normalizedKey, text);
         });
         return sanitized;
+    }
+
+    private List<String> resolveRegisteredDocumentAgent(ReportExecutionRequest request) {
+        String requested = request.getAgentId();
+        if (requested == null || requested.isBlank() || "ALL".equalsIgnoreCase(requested) || requested.contains(",")) {
+            throw new SecurityException("A document-service request must target exactly one registered agent");
+        }
+        return List.of(requested.trim());
     }
 
     private DoorsApiException agentExecutionException(

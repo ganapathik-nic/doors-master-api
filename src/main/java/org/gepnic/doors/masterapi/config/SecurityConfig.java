@@ -138,7 +138,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/master/reports/orchestrate/**").permitAll()
                 .requestMatchers("/api/v1/master/gateway/orchestrate/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/documents/**")
-                    .hasAuthority("ROLE_API_CLIENT")
+                    .hasAnyAuthority("ROLE_API_CLIENT", "ROLE_SWAGGER_SESSION")
                 .requestMatchers("/api/v1/master/gateway/telemetry/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/master/gateway/handshake")
                     .hasAuthority("ROLE_API_CLIENT")

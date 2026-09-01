@@ -1,5 +1,24 @@
-{"properties": [{
-  "name": "springdoc.swagger-ui.headContent",
-  "type": "java.lang.String",
-  "description": "A description for 'springdoc.swagger-ui.headContent'"
-}]}
+{
+  "groups": [
+    { "name": "doors.documents", "type": "java.lang.Object", "description": "Registered document-service download configuration." },
+    { "name": "doors.contracts", "type": "java.lang.Object", "description": "Governed template-contract discovery configuration." },
+    { "name": "doors.security.bootstrap-security-admin", "type": "java.lang.Object", "description": "Controlled Security Administrator bootstrap settings." },
+    { "name": "crypto", "type": "java.lang.Object", "description": "DOORS cryptographic key-storage configuration." }
+  ],
+  "properties": [
+    { "name": "doors.documents.curl-executable", "type": "java.lang.String", "description": "Executable used for registered document-service downloads.", "defaultValue": "curl" },
+    { "name": "doors.documents.authorization-secret", "type": "java.lang.String", "description": "Secret used to create the upstream document-service authorization digest." },
+    { "name": "doors.documents.authorization-client-id", "type": "java.lang.String", "description": "Client identifier appended to the upstream authorization value." },
+    { "name": "doors.contracts.capture-observed-responses", "type": "java.lang.Boolean", "description": "Whether successful executions may record inferred response schemas.", "defaultValue": false },
+    { "name": "doors.security.mfa-encryption-key", "type": "java.lang.String", "description": "Base64-encoded 32-byte key used to protect MFA secrets." },
+    { "name": "doors.security.manager-plane-enforced", "type": "java.lang.Boolean", "description": "Whether manager-plane token enforcement is enabled.", "defaultValue": false },
+    { "name": "doors.security.manager-plane-token", "type": "java.lang.String", "description": "Shared token supplied by the trusted manager-plane proxy." },
+    { "name": "doors.security.bootstrap-legacy-admin-enabled", "type": "java.lang.Boolean", "description": "Whether legacy development administrator bootstrap is enabled.", "defaultValue": false },
+    { "name": "doors.security.bootstrap-security-admin.username", "type": "java.lang.String", "description": "Controlled Security Administrator bootstrap username." },
+    { "name": "doors.security.bootstrap-security-admin.email", "type": "java.lang.String", "description": "Controlled Security Administrator bootstrap email." },
+    { "name": "doors.security.bootstrap-security-admin.password", "type": "java.lang.String", "description": "Controlled Security Administrator bootstrap password." },
+    { "name": "crypto.keys-directory", "type": "java.lang.String", "description": "Directory containing DOORS signing and encryption keys.", "defaultValue": "./security/keys/" },
+    { "name": "springdoc.swagger-ui.headContent", "type": "java.lang.String", "description": "Additional content inserted into the Swagger UI head." }
+  ],
+  "hints": []
+}

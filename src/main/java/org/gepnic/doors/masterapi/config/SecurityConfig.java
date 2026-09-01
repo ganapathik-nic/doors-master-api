@@ -128,6 +128,14 @@ public class SecurityConfig {
                     "/api/v1/auth/me",
                     "/api/v1/auth/change-password"
                 ).authenticated()
+                .requestMatchers(HttpMethod.GET, "/api/v1/documentation/**").hasAnyAuthority(
+                    "SecurityAdmin", "SECURITYADMIN", "ROLE_SECURITYADMIN",
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN",
+                    "Developer", "DEVELOPER", "ROLE_DEVELOPER",
+                    "DataViewer", "DATAVIEWER", "ROLE_DATAVIEWER",
+                    "External", "EXTERNAL", "ROLE_EXTERNAL",
+                    "ApiUser", "APIUSER", "ROLE_APIUSER"
+                )
                 .requestMatchers("/api/v1/auth/list/active").hasAnyAuthority(
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )

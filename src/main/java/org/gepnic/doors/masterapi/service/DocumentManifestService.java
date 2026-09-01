@@ -62,7 +62,8 @@ public class DocumentManifestService {
         List<Map<String, Object>> documents = new ArrayList<>();
         collectDocuments(normalizedQueryData, registration, request, documents);
         if (previewDocumentCalls) previewDocuments(registration, documents);
-        else retrieveDocuments(registration, documents);
+        else retrieveDocuments(registration, documents,
+                source.nodeResponseCodes().get(registration.getAgentId()));
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("docsServiceName", registration.getServiceName());
@@ -76,6 +77,7 @@ public class DocumentManifestService {
         intermediateQueryResponse.put("data", normalizedQueryData);
         intermediateQueryResponse.put("offlineAgents", source.offlineAgents());
         intermediateQueryResponse.put("nodeErrors", source.nodeErrors());
+        intermediateQueryResponse.put("nodeResponseCodes", source.nodeResponseCodes());
         intermediateQueryResponse.put("pagination", source.pagination());
         response.put("intermediateQueryResponse", intermediateQueryResponse);
         response.put("documentCount", documents.size());
@@ -211,7 +213,8 @@ public class DocumentManifestService {
     }
 
     private void retrieveDocuments(DocumentServiceRegistration registration,
-                                   List<Map<String, Object>> documents) {
+                                   List<Map<String, Object>> documents,
+                                   Integer queryResponseCode) {
         for (Map<String, Object> document : documents) {
             String downloadId = required(document.get("downloadId"), "downloadId");
             String serviceDocCode = required(document.get("serviceDocCode"), "serviceDocCode");
@@ -220,12 +223,16 @@ public class DocumentManifestService {
             document.put("documentServiceCall", documentServiceCall(
                     registration, downloadId, serviceDocCode, fileName, packetType));
             try {
-                RegisteredDocumentServiceClient.DocumentPayload payload = documentServiceClient.download(
-                        registration, downloadId, serviceDocCode, fileName, packetType);
-                document.put("retrievalStatus", "EXECUTED_AVAILABLE");
-                document.put("contentType", payload.contentType().toString());
-                document.put("contentLength", payload.content().length);
-                document.put("downloadOperation", downloadOperation(registration, document));
+                try (RegisteredDocumentServiceClient.DocumentPayload payload = documentServiceClient.download(
+                        registration, downloadId, serviceDocCode, fileName, packetType)) {
+                    document.put("retrievalStatus", "EXECUTED_AVAILABLE");
+                    document.put("contentType", payload.contentType().toString());
+                    document.put("contentLength", payload.contentLength());
+                    document.put("sha256", payload.sha256());
+                    document.put("documentServiceResponseCode", payload.responseCode());
+                    document.put("queryResponseCode", queryResponseCode);
+                    document.put("downloadOperation", downloadOperation(registration, document));
+                }
             } catch (RuntimeException exception) {
                 document.put("retrievalStatus", "EXECUTION_FAILED");
                 document.put("retrievalError", retrievalError(exception));
@@ -293,6 +300,7 @@ public class DocumentManifestService {
         body.put("docCode", document.get("serviceDocCode"));
         body.put("fileName", document.get("fileName"));
         body.put("packetType", document.get("packetType"));
+        body.put("queryResponseCode", document.get("queryResponseCode"));
         operation.put("body", body);
         operation.put("returns", "BINARY_ATTACHMENT");
         return operation;

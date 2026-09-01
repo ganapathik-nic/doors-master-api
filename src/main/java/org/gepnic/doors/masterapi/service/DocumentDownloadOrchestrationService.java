@@ -58,13 +58,11 @@ public class DocumentDownloadOrchestrationService {
         String serviceDocCode = required(mapping.path("serviceDocCode").asText(null), "serviceDocCode mapping");
         String packetType = required(mapping.path("packetType").asText(null), "packetType mapping");
 
-        DocumentServiceRegistration registration = serviceRepository.findByAgentId(agentId)
-                .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
-                .orElseThrow(() -> new NoSuchElementException("No active document service is registered for Agent " + agentId));
+        DocumentServiceRegistration registration = resolveDocumentService(agentId, document);
         RegisteredDocumentServiceClient.DocumentPayload response = documentServiceClient.download(
                 registration, downloadId, serviceDocCode, fileName, packetType);
-        return new DownloadedDocument(fileName,
-                response.contentType(), response.content(), agentId, policy.getPolicyCode(), documentType);
+        return new DownloadedDocument(fileName, response.contentType(), response.content(),
+                response.contentLength(), response.sha256(), agentId, policy.getPolicyCode(), documentType);
     }
 
     private void authorizeAgent(ApiClient client, String agentId) {
@@ -72,6 +70,34 @@ public class DocumentDownloadOrchestrationService {
                 "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name = ? AND agent_id = ?",
                 Integer.class, client.getClientName(), agentId);
         if (count == null || count == 0) throw new SecurityException("API Client is not authorized for Agent " + agentId);
+    }
+
+    private DocumentServiceRegistration resolveDocumentService(String agentId, Map<String, Object> document) {
+        String requestedServiceName = optional(document.get("docsServiceName"));
+        if (requestedServiceName != null) {
+            DocumentServiceRegistration registration = serviceRepository
+                    .findByServiceNameIgnoreCase(requestedServiceName)
+                    .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
+                    .orElseThrow(() -> new NoSuchElementException(
+                            "Active document service not found: " + requestedServiceName));
+            if (!agentId.equals(registration.getAgentId())) {
+                throw new IllegalArgumentException(
+                        "Document service " + requestedServiceName + " is not registered for Agent " + agentId);
+            }
+            return registration;
+        }
+
+        List<DocumentServiceRegistration> registrations = serviceRepository
+                .findAllByAgentIdAndIsActiveTrueOrderByServiceNameAsc(agentId);
+        if (registrations.isEmpty()) {
+            throw new NoSuchElementException("No active document service is registered for Agent " + agentId);
+        }
+        if (registrations.size() > 1) {
+            throw new IllegalArgumentException(
+                    "Multiple active document services are registered for Agent " + agentId
+                            + "; document.docsServiceName is required");
+        }
+        return registrations.getFirst();
     }
 
     private JsonNode findMapping(DocumentDownloadPolicy policy, String documentType) {
@@ -107,6 +133,20 @@ public class DocumentDownloadOrchestrationService {
         return text;
     }
 
-    public record DownloadedDocument(String fileName, MediaType contentType, byte[] content,
-                                     String agentId, String policyCode, String documentType) { }
+    private String optional(Object value) {
+        String text = value == null ? "" : String.valueOf(value).trim();
+        return text.isBlank() ? null : text;
+    }
+
+    public record DownloadedDocument(String fileName, MediaType contentType, java.nio.file.Path content,
+                                     long contentLength, String sha256, String agentId,
+                                     String policyCode, String documentType) implements AutoCloseable {
+        public java.io.InputStream openStream() throws java.io.IOException {
+            return java.nio.file.Files.newInputStream(content);
+        }
+        @Override public void close() {
+            try { java.nio.file.Files.deleteIfExists(content); }
+            catch (java.io.IOException e) { throw new IllegalStateException("Unable to remove temporary document", e); }
+        }
+    }
 }

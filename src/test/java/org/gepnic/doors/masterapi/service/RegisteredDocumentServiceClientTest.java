@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
 import java.net.URI;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -28,18 +31,20 @@ class RegisteredDocumentServiceClientTest {
     }
 
     @Test
-    void downloadsBinaryDocumentUsingRegisteredEndpointAndEncodedParameters() {
+    void downloadsBinaryDocumentUsingRegisteredEndpointAndEncodedParameters() throws Exception {
         byte[] expected = new byte[]{0x50, 0x4b, 0x03, 0x04};
         URI expectedUri = URI.create("https://demoeproc.nic.in/nicgep_docs_webservice_v1/Documents/downloadDocuments" +
                 "?downloadId=33993&docCode=BOQCHART&fileName=boq%20comparative%20chart.xlsx" +
                 "&packetType=Finance");
-        documentDownloader.response = new DocumentDownloader.DownloadResponse(expected,
+        documentDownloader.response = response(expected,
                 MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
 
         RegisteredDocumentServiceClient.DocumentPayload result = client.download(
                 registration, "33993", "BOQCHART", "boq comparative chart.xlsx", "Finance");
 
-        assertThat(result.content()).isEqualTo(expected);
+        assertThat(Files.readAllBytes(result.content())).isEqualTo(expected);
+        assertThat(result.sha256()).isEqualTo(sha256(expected));
+        result.close();
         assertThat(result.contentType().toString())
                 .isEqualTo("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         assertThat(documentDownloader.requestedUri).isEqualTo(expectedUri);
@@ -48,8 +53,7 @@ class RegisteredDocumentServiceClientTest {
     @Test
     void rejectsHtmlPortalPageInsteadOfReturningItAsAFile() {
         URI uri = client.buildDownloadUri(registration, "70128", "BIDPCK", "BOQ_33993.xls", "Finance");
-        documentDownloader.response = new DocumentDownloader.DownloadResponse(
-                "<html>Welcome</html>".getBytes(), MediaType.TEXT_HTML);
+        documentDownloader.response = response("<html>Welcome</html>".getBytes(), MediaType.TEXT_HTML);
 
         assertThatThrownBy(() -> client.download(
                 registration, "70128", "BIDPCK", "BOQ_33993.xls", "Finance"))
@@ -60,8 +64,7 @@ class RegisteredDocumentServiceClientTest {
     @Test
     void rejectsEmptySuccessfulResponse() {
         URI uri = client.buildDownloadUri(registration, "403", "NEGOTIEBIDDOC", "BOQ_29543.xls", "Finance");
-        documentDownloader.response = new DocumentDownloader.DownloadResponse(
-                new byte[0], MediaType.APPLICATION_OCTET_STREAM);
+        documentDownloader.response = response(new byte[0], MediaType.APPLICATION_OCTET_STREAM);
 
         assertThatThrownBy(() -> client.download(
                 registration, "403", "NEGOTIEBIDDOC", "BOQ_29543.xls", "Finance"))
@@ -88,5 +91,18 @@ class RegisteredDocumentServiceClientTest {
             requestedUri = uri;
             return response;
         }
+    }
+
+    private static DocumentDownloader.DownloadResponse response(byte[] body, MediaType contentType) {
+        try {
+            var path = Files.createTempFile("document-test-", ".bin");
+            Files.write(path, body);
+            return new DocumentDownloader.DownloadResponse(path, body.length, sha256(body), contentType, 200);
+        } catch (Exception e) { throw new IllegalStateException(e); }
+    }
+
+    private static String sha256(byte[] body) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body)); }
+        catch (Exception e) { throw new IllegalStateException(e); }
     }
 }

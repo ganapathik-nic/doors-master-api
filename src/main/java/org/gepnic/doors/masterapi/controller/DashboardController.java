@@ -93,6 +93,14 @@ public class DashboardController {
                 map.put("count", record[1]);
                 return map;
             }).toList());
+            List<Map<String, Object>> latestQueryAdditions = jdbcTemplate.queryForList("""
+                    SELECT created_at::date AS "queryDate", COUNT(*) AS count
+                      FROM sql_templates
+                     WHERE created_at::date = (SELECT MAX(created_at::date) FROM sql_templates)
+                     GROUP BY created_at::date
+                    """);
+            stats.put("latestQueryAdditions",
+                    latestQueryAdditions.isEmpty() ? Map.of() : latestQueryAdditions.get(0));
 
             // 2. Activity Trends (Last 7 Days)
             String trendSql = """

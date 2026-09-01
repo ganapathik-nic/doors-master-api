@@ -33,6 +33,7 @@ class PlaneRoutingFilterTest {
     @Test
     void adminPlaneCannotExposeMachineExecutionEndpoint() {
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/master/templates/list"));
+        assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/documentation/catalogue"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN,
                 "/api/v1/master/gateway/api-clients/list-all-profiles"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.ADMIN, "/api/v1/external/execute/report"));
@@ -44,6 +45,7 @@ class PlaneRoutingFilterTest {
     void externalPlaneCannotExposeAdministration() {
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/external/data-pull/submit"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/master/agents/list/active"));
+        assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/documentation/catalogue"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/admin/users/list"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/master/agents/list"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/external/execute/report"));
@@ -53,6 +55,7 @@ class PlaneRoutingFilterTest {
     void apiPlaneOnlyExposesMachineContractSurface() {
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/master/gateway/orchestrate/report"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/v3/api-docs"));
+        assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/documentation/catalogue"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/master/dashboard/stats"));
     }
 }

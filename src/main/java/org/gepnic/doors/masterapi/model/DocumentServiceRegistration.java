@@ -17,7 +17,7 @@ public class DocumentServiceRegistration extends DoorsBaseEntity {
     @Column(name = "service_id")
     private Long serviceId;
 
-    @Column(name = "agent_id", nullable = false, unique = true, length = 255)
+    @Column(name = "agent_id", nullable = false, length = 255)
     private String agentId;
 
     @Column(name = "service_name", nullable = false, length = 200)

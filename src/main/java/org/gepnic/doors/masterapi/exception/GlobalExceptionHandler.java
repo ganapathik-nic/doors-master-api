@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 @RestControllerAdvice
@@ -79,6 +80,21 @@ public class GlobalExceptionHandler {
                 "DOORS-REQUEST-INVALID",
                 "invalid-request",
                 "Invalid request",
+                exception.getMessage(),
+                false,
+                Map.of());
+    }
+
+    @ExceptionHandler(NoSuchElementException.class)
+    public ResponseEntity<ProblemDetail> handleNotFound(
+            NoSuchElementException exception,
+            HttpServletRequest request) {
+        return problem(
+                request,
+                HttpStatus.NOT_FOUND,
+                "DOORS-RESOURCE-NOT-FOUND",
+                "resource-not-found",
+                "Resource not found",
                 exception.getMessage(),
                 false,
                 Map.of());

@@ -92,6 +92,7 @@ public class ReportViewerService {
         List<Map<String, Object>> aggregatedResults = new ArrayList<>();
         List<String> offlineAgents = new ArrayList<>();
         Map<String, String> nodeErrors = new LinkedHashMap<>();
+        Map<String, Integer> nodeResponseCodes = new LinkedHashMap<>();
         int actualAuditCount = 0;
         long totalRows = 0L;
         long totalPages = 1L;
@@ -182,6 +183,7 @@ public class ReportViewerService {
 
                     // 🛡️ Deliver payload to the dynamically derived proxy endpoint
                     ResponseEntity<String> response = restTemplate.postForEntity(endpoint, payload, String.class);
+                    nodeResponseCodes.put(agentIdTrimmed, response.getStatusCode().value());
                     String rawBody = response.getBody();
 
                     if (rawBody != null && !rawBody.isBlank()) {
@@ -234,7 +236,7 @@ public class ReportViewerService {
                             "Blank parameter result exceeds 100 rows"
                     )
                     : ReportPagination.disabled(totalRows > 0L ? totalRows : actualAuditCount);
-            return new ReportResult(aggregatedResults, offlineAgents, nodeErrors, pagination);
+            return new ReportResult(aggregatedResults, offlineAgents, nodeErrors, nodeResponseCodes, pagination);
 
         } catch (SecurityException se) {
             throw se;

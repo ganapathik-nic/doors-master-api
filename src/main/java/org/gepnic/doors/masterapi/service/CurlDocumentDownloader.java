@@ -87,7 +87,11 @@ public class CurlDocumentDownloader implements DocumentDownloader {
             MediaType contentType = values.length < 2 || values[1].isBlank()
                     ? MediaType.APPLICATION_OCTET_STREAM
                     : MediaType.parseMediaType(values[1].trim());
-            return new DownloadResponse(Files.readAllBytes(bodyFile), contentType);
+            long contentLength = Files.size(bodyFile);
+            String sha256 = digest(bodyFile);
+            Path completedBody = bodyFile;
+            bodyFile = null; // ownership is transferred to DownloadResponse
+            return new DownloadResponse(completedBody, contentLength, sha256, contentType, status);
         } catch (IOException e) {
             throw new IllegalStateException("Unable to execute curl for document download", e);
         } catch (InterruptedException e) {
@@ -97,6 +101,21 @@ public class CurlDocumentDownloader implements DocumentDownloader {
             deleteQuietly(bodyFile);
             deleteQuietly(metadataFile);
             deleteQuietly(errorFile);
+        }
+    }
+
+    private static String digest(Path path) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (var input = Files.newInputStream(path)) {
+                byte[] buffer = new byte[64 * 1024];
+                for (int read; (read = input.read(buffer)) >= 0;) {
+                    if (read > 0) digest.update(buffer, 0, read);
+                }
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 

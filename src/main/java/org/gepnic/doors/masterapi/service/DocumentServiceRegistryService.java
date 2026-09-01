@@ -55,9 +55,6 @@ public class DocumentServiceRegistryService {
     public Map<String, Object> create(Map<String, Object> body) {
         DocumentServiceRegistration registration = new DocumentServiceRegistration();
         apply(registration, body, true);
-        if (repository.existsByAgentId(registration.getAgentId())) {
-            throw new IllegalArgumentException("A document service is already registered for Agent " + registration.getAgentId());
-        }
         if (repository.existsByServiceNameIgnoreCase(registration.getServiceName())) {
             throw new IllegalArgumentException("DOCSServiceName is already registered");
         }
@@ -69,9 +66,6 @@ public class DocumentServiceRegistryService {
     public Map<String, Object> update(Long id, Map<String, Object> body) {
         DocumentServiceRegistration registration = require(id);
         apply(registration, body, false);
-        if (repository.existsByAgentIdAndServiceIdNot(registration.getAgentId(), id)) {
-            throw new IllegalArgumentException("A document service is already registered for Agent " + registration.getAgentId());
-        }
         if (repository.existsByServiceNameIgnoreCaseAndServiceIdNot(registration.getServiceName(), id)) {
             throw new IllegalArgumentException("DOCSServiceName is already registered");
         }
@@ -103,7 +97,7 @@ public class DocumentServiceRegistryService {
         if (body.containsKey("manifestQueryName")) value.setManifestQueryName(optional(body.get("manifestQueryName")));
         if (body.containsKey("manifestClientName")) value.setManifestClientName(optional(body.get("manifestClientName")));
         if (creating || body.containsKey("documentDownloadPolicyCode")) value.setDocumentDownloadPolicyCode(
-                required(body.get("documentDownloadPolicyCode"), "documentDownloadPolicyCode"));
+                optional(body.get("documentDownloadPolicyCode")));
         if (body.containsKey("accessMode")) value.setAccessMode(required(body.get("accessMode"), "accessMode").toUpperCase(Locale.ROOT));
         if (body.containsKey("payloadMode")) value.setPayloadMode(
                 normalizePayloadMode(required(body.get("payloadMode"), "payloadMode")));
@@ -120,11 +114,13 @@ public class DocumentServiceRegistryService {
         if (!value.getServiceName().matches("[A-Za-z0-9_-]+")) {
             throw new IllegalArgumentException("DOCSServiceName may contain only letters, numbers, hyphen and underscore");
         }
-        var policy = policyRepository.findByPolicyCodeIgnoreCase(value.getDocumentDownloadPolicyCode())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Unknown Document Download Policy: " + value.getDocumentDownloadPolicyCode()));
-        if (!"ACTIVE".equals(policy.getStatus())) {
-            throw new IllegalArgumentException("Document Download Policy must be active");
+        if (value.getDocumentDownloadPolicyCode() != null) {
+            var policy = policyRepository.findByPolicyCodeIgnoreCase(value.getDocumentDownloadPolicyCode())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Unknown Document Download Policy: " + value.getDocumentDownloadPolicyCode()));
+            if (!"ACTIVE".equals(policy.getStatus())) {
+                throw new IllegalArgumentException("Document Download Policy must be active");
+            }
         }
         boolean queryMapped = value.getManifestQueryName() != null;
         boolean clientMapped = value.getManifestClientName() != null;

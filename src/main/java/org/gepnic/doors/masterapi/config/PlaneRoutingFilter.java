@@ -66,6 +66,7 @@ public class PlaneRoutingFilter extends OncePerRequestFilter {
         return switch (plane) {
             case ADMIN -> startsWithAny(path,
                     "/api/v1/auth/", "/api/v1/admin/",
+                    "/api/v1/documentation/",
                     "/api/v1/master/gateway/api-clients/",
                     "/api/v1/master/", "/api/v1/governance/", "/api/v1/reports/")
                     && (!path.startsWith("/api/v1/master/gateway/")
@@ -73,7 +74,7 @@ public class PlaneRoutingFilter extends OncePerRequestFilter {
             case EXTERNAL -> !path.startsWith("/api/v1/external/execute/") && (
                     path.equals("/api/v1/master/agents/list/active")
                     || startsWithAny(path,
-                            "/api/v1/auth/", "/api/v1/external/",
+                            "/api/v1/auth/", "/api/v1/documentation/", "/api/v1/external/",
                             "/api/v1/governance/requests", "/api/v1/reports/"));
             case API -> startsWithAny(path,
                     "/api/v1/master/gateway/", "/api/v1/external/execute/",

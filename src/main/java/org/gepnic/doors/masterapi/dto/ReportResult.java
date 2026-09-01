@@ -10,5 +10,6 @@ public record ReportResult(
     @JsonProperty("data") List<Map<String, Object>> data, 
     @JsonProperty("offlineAgents") List<String> offlineAgents,
     @JsonProperty("nodeErrors") Map<String, String> nodeErrors,
+    @JsonProperty("nodeResponseCodes") Map<String, Integer> nodeResponseCodes,
     @JsonProperty("pagination") ReportPagination pagination
 ) {}

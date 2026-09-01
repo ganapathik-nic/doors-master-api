@@ -7,10 +7,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface DocumentServiceRegistrationRepository extends JpaRepository<DocumentServiceRegistration, Long> {
-    Optional<DocumentServiceRegistration> findByAgentId(String agentId);
     Optional<DocumentServiceRegistration> findByServiceNameIgnoreCase(String serviceName);
-    boolean existsByAgentId(String agentId);
-    boolean existsByAgentIdAndServiceIdNot(String agentId, Long serviceId);
+    List<DocumentServiceRegistration> findAllByAgentIdAndIsActiveTrueOrderByServiceNameAsc(String agentId);
     boolean existsByServiceNameIgnoreCase(String serviceName);
     boolean existsByServiceNameIgnoreCaseAndServiceIdNot(String serviceName, Long serviceId);
     List<DocumentServiceRegistration> findAllByOrderByServiceNameAsc();

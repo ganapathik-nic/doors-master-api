@@ -50,8 +50,8 @@ public class DocumentDownloadPolicyService {
     @Transactional
     public Map<String, Object> update(Long id, Map<String, Object> body) {
         DocumentDownloadPolicy policy = require(id);
-        if (Set.of("ACTIVE", "RETIRED").contains(policy.getStatus())) {
-            throw new IllegalStateException("Active or retired policies cannot be edited; deactivate the policy first");
+        if ("RETIRED".equals(policy.getStatus())) {
+            throw new IllegalStateException("Retired policies cannot be edited");
         }
         apply(policy, body, false);
         policy.setStatus("DRAFT");
@@ -131,7 +131,6 @@ public class DocumentDownloadPolicyService {
         });
 
         requireArray(policy.getDocumentTypes(), "documentTypes");
-        if (policy.getDocumentTypes().isEmpty()) throw new IllegalArgumentException("At least one document type mapping is required");
         Set<String> businessTypes = new HashSet<>();
         policy.getDocumentTypes().forEach(type -> {
             String businessType = requiredField(type, "businessType", "Document type").toUpperCase(Locale.ROOT);

@@ -1,0 +1,129 @@
+# Development-only configuration.
+# Activate with: --spring.profiles.active=dev
+
+server:
+  port: 8052
+  # Generate external URLs from trusted X-Forwarded-* headers.
+  forward-headers-strategy: framework
+  max-http-request-header-size: 64KB
+  tomcat:
+    connection-timeout: 10m
+    keep-alive-timeout: 10m
+
+spring:
+  datasource:
+    url: ${DOORS_DB_URL:jdbc:postgresql://localhost:5433/doors_registry}
+    username: ${DOORS_DB_USER:doorsuser}
+    password: ${DOORS_DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+
+  jpa:
+    hibernate:
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        implicit-strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyJpaImpl
+      ddl-auto: none
+    show-sql: true
+    properties:
+      "[hibernate.format_sql]": true
+      "[hibernate.use_sql_comments]": true
+
+  threads:
+    virtual:
+      enabled: true
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+doors:
+  documents:
+    curl-executable: ${DOORS_CURL_EXECUTABLE:curl}
+    authorization-secret: ${DOORS_DOCUMENT_AUTH_SECRET:SecretKeyForReports}
+    authorization-client-id: ${DOORS_DOCUMENT_AUTH_CLIENT_ID:101}
+
+  planes:
+    enforced: ${DOORS_PLANES_ENFORCED:true}
+    admin-hosts:
+      - ${DOORS_ADMIN_HOST_LOCAL:doorsadmin.doors.test}
+      - ${DOORS_ADMIN_HOST_PRODUCTION:doorsadmin.gepnic.nic.in}
+    external-hosts:
+      - ${DOORS_EXTERNAL_HOST_LOCAL:doorsexternal.doors.test}
+      - ${DOORS_EXTERNAL_HOST_PRODUCTION:doorsexternal.gepnic.nic.in}
+    api-hosts:
+      - ${DOORS_API_HOST_LOCAL:doorsapi.doors.test}
+      - ${DOORS_API_HOST_PRODUCTION:doorsapi.gepnic.nic.in}
+
+  contracts:
+    capture-observed-responses: ${DOORS_CONTRACT_CAPTURE_ENABLED:false}
+
+  security:
+    # Development fallback only. Staging and production must supply a unique
+    # Base64-encoded 32-byte key through the environment.
+    mfa-encryption-key: ${DOORS_SECURITY_MFA_ENCRYPTION_KEY:REVWRUxPUE1FTlQtT05MWS0zMi1CWVRFLUtFWSEhISE=}
+    manager-plane-enforced: ${DOORS_SECURITY_MANAGER_PLANE_ENFORCED:false}
+    manager-plane-token: ${DOORS_SECURITY_MANAGER_PLANE_TOKEN:LOCAL-DEVELOPMENT-ONLY}
+    bootstrap-legacy-admin-enabled: ${DOORS_SECURITY_BOOTSTRAP_LEGACY_ADMIN_ENABLED:false}
+    bootstrap-security-admin:
+      username: ${DOORS_SECURITY_ADMIN_USERNAME:}
+      email: ${DOORS_SECURITY_ADMIN_EMAIL:}
+      password: ${DOORS_SECURITY_ADMIN_PASSWORD:}
+    allowed-origins:
+      - "http://localhost:*"
+      - "http://127.0.0.1:*"
+      - "https://doorsadmin.doors.test"
+      - "https://doorsexternal.doors.test"
+      - "https://doorsapi.doors.test"
+      - "https://doorsadmin.doors.test:*"
+      - "https://doorsexternal.doors.test:*"
+      - "https://doorsapi.doors.test:*"
+      - "https://doorsapi.gepnic.nic.in"
+      - "http://demoetenders.tn.nic.in:*"
+      - "https://demoetenders.tn.nic.in"
+    rate-limit:
+      ui:
+        capacity: 10
+        refill-minutes: 1
+        penalty-minutes: 1
+      gateway:
+        capacity: 5
+        refill-minutes: 1
+    gateway-path-pattern: "/v1/master/gateway/orchestrate/"
+
+crypto:
+  keys-directory: ${DOORS_CRYPTO_KEYS_DIRECTORY:./security/keys/}
+
+logging:
+  level:
+    "[org.springframework.jdbc.core.JdbcTemplate]": DEBUG
+    "[org.springframework.jdbc.datasource.DataSourceUtils]": DEBUG
+    "[org.hibernate.orm.results]": DEBUG
+    "[org.hibernate.orm.jdbc.bind]": TRACE
+
+springdoc:
+  cache:
+    disabled: ${DOORS_OPENAPI_CACHE_DISABLED:false}
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  paths-to-match:
+    - /api/v1/master/gateway/orchestrate/**
+    - /api/v1/master/gateway/documents/**
+  show-actuator: false
+  packages-to-scan: org.gepnic.doors.masterapi.controller
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: alpha
+    doc-expansion: full
+    disable-swagger-default-url: true
+    config-url: /v3/api-docs/swagger-config
+    url: /v3/api-docs

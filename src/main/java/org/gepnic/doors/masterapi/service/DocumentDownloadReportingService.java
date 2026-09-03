@@ -158,6 +158,19 @@ public class DocumentDownloadReportingService {
                  GROUP BY COALESCE(a.display_name, d.agent_id), d.agent_id
                  ORDER BY deliveries DESC, name LIMIT 1
                 """));
+        List<Map<String, Object>> instanceDeliveries = jdbcTemplate.queryForList("""
+                SELECT COALESCE(a.display_name, a.agent_id) AS name,
+                       a.agent_id AS "agentId",
+                       COUNT(d.audit_id) AS deliveries
+                  FROM agents a
+                  LEFT JOIN document_download_audit d
+                    ON d.agent_id = a.agent_id
+                   AND d.completed_at >= CURRENT_DATE - INTERVAL '30 days'
+                   AND d.outcome = 'STREAMED'
+                 WHERE a.is_active = TRUE
+                 GROUP BY COALESCE(a.display_name, a.agent_id), a.agent_id
+                 ORDER BY deliveries DESC, name
+                """);
         long todayAttempts = number(totals.get("downloadsToday"));
         long todayFailures = number(totals.get("failedToday"));
         double todayFailureRate = rate(todayFailures, todayAttempts);
@@ -172,6 +185,7 @@ public class DocumentDownloadReportingService {
         insights.put("recentSuccessStreak", recentSuccessStreak); insights.put("lastActivityAt", lastActivity);
         insights.put("activeInstances", activeInstances == null ? 0 : activeInstances);
         insights.put("leadingInstance", leadingInstance);
+        insights.put("instanceDeliveries", instanceDeliveries);
         Map<String, Object> result = new LinkedHashMap<>(totals);
         result.put("trend", trend); result.put("byService", byService); result.put("recentFailures", recentFailures);
         result.put("insights", insights);

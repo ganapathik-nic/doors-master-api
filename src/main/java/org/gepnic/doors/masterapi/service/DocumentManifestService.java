@@ -9,7 +9,6 @@ import org.gepnic.doors.masterapi.model.DocumentServiceRegistration;
 import org.gepnic.doors.masterapi.repository.ApiClientRepository;
 import org.gepnic.doors.masterapi.repository.DocumentServiceRegistrationRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClientResponseException;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -62,7 +61,7 @@ public class DocumentManifestService {
         List<Map<String, Object>> documents = new ArrayList<>();
         collectDocuments(normalizedQueryData, registration, request, documents);
         if (previewDocumentCalls) previewDocuments(registration, documents);
-        else retrieveDocuments(registration, documents,
+        else prepareDownloads(registration, documents,
                 source.nodeResponseCodes().get(registration.getAgentId()));
 
         Map<String, Object> response = new LinkedHashMap<>();
@@ -72,7 +71,7 @@ public class DocumentManifestService {
         response.put("manifestClientName", registration.getManifestClientName());
         response.put("eligibilityMode", "OPEN");
         response.put("documentDownloadPolicyCode", registration.getDocumentDownloadPolicyCode());
-        response.put("documentCallMode", previewDocumentCalls ? "PREVIEW" : "EXECUTED");
+        response.put("documentCallMode", previewDocumentCalls ? "PREVIEW" : "ON_DEMAND");
         Map<String, Object> intermediateQueryResponse = new LinkedHashMap<>();
         intermediateQueryResponse.put("data", normalizedQueryData);
         intermediateQueryResponse.put("offlineAgents", source.offlineAgents());
@@ -81,10 +80,11 @@ public class DocumentManifestService {
         intermediateQueryResponse.put("pagination", source.pagination());
         response.put("intermediateQueryResponse", intermediateQueryResponse);
         response.put("documentCount", documents.size());
-        response.put("retrievedDocumentCount", documents.stream()
-                .filter(value -> "EXECUTED_AVAILABLE".equals(value.get("retrievalStatus"))).count());
-        response.put("failedDocumentCount", documents.stream()
-                .filter(value -> "EXECUTION_FAILED".equals(value.get("retrievalStatus"))).count());
+        response.put("downloadableDocumentCount", documents.stream()
+                .filter(value -> "DOWNLOAD_READY".equals(value.get("retrievalStatus"))).count());
+        // Retained for response compatibility. Manifest discovery no longer downloads files.
+        response.put("retrievedDocumentCount", 0L);
+        response.put("failedDocumentCount", 0L);
         response.put("documents", documents);
         return response;
     }
@@ -212,54 +212,20 @@ public class DocumentManifestService {
         documents.add(item);
     }
 
-    private void retrieveDocuments(DocumentServiceRegistration registration,
-                                   List<Map<String, Object>> documents,
-                                   Integer queryResponseCode) {
+    private void prepareDownloads(DocumentServiceRegistration registration,
+                                  List<Map<String, Object>> documents,
+                                  Integer queryResponseCode) {
         for (Map<String, Object> document : documents) {
             String downloadId = required(document.get("downloadId"), "downloadId");
             String serviceDocCode = required(document.get("serviceDocCode"), "serviceDocCode");
             String fileName = required(document.get("fileName"), "fileName");
             String packetType = required(document.get("packetType"), "packetType");
+            document.put("retrievalStatus", "DOWNLOAD_READY");
             document.put("documentServiceCall", documentServiceCall(
                     registration, downloadId, serviceDocCode, fileName, packetType));
-            try {
-                try (RegisteredDocumentServiceClient.DocumentPayload payload = documentServiceClient.download(
-                        registration, downloadId, serviceDocCode, fileName, packetType)) {
-                    document.put("retrievalStatus", "EXECUTED_AVAILABLE");
-                    document.put("contentType", payload.contentType().toString());
-                    document.put("contentLength", payload.contentLength());
-                    document.put("sha256", payload.sha256());
-                    document.put("documentServiceResponseCode", payload.responseCode());
-                    document.put("queryResponseCode", queryResponseCode);
-                    document.put("downloadOperation", downloadOperation(registration, document));
-                }
-            } catch (RuntimeException exception) {
-                document.put("retrievalStatus", "EXECUTION_FAILED");
-                document.put("retrievalError", retrievalError(exception));
-            }
+            document.put("queryResponseCode", queryResponseCode);
+            document.put("downloadOperation", downloadOperation(registration, document));
         }
-    }
-
-    private Map<String, Object> retrievalError(RuntimeException exception) {
-        Map<String, Object> error = new LinkedHashMap<>();
-        error.put("code", "DOCUMENT_SERVICE_CALL_FAILED");
-        if (exception instanceof RestClientResponseException responseException) {
-            error.put("upstreamStatus", responseException.getStatusCode().value());
-            error.put("message", "Registered document service returned HTTP "
-                    + responseException.getStatusCode().value());
-        } else {
-            Throwable cause = exception;
-            while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
-            String message = cause.getMessage();
-            error.put("message", message == null || message.isBlank()
-                    ? cause.getClass().getSimpleName()
-                    : truncate(message, 500));
-        }
-        return error;
-    }
-
-    private String truncate(String value, int maximumLength) {
-        return value.length() <= maximumLength ? value : value.substring(0, maximumLength);
     }
 
     private void previewDocuments(DocumentServiceRegistration registration,
@@ -308,13 +274,17 @@ public class DocumentManifestService {
 
     public RegisteredDocumentServiceClient.DocumentPayload downloadDocument(
             String serviceName, String apiKey, Map<String, Object> request) {
-        clientRepository.findByApiKey(apiKey)
+        ApiClient caller = clientRepository.findByApiKey(apiKey)
                 .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
                 .orElseThrow(() -> new SecurityException("API Client credentials are invalid or inactive"));
         DocumentServiceRegistration registration = registrationRepository.findByServiceNameIgnoreCase(serviceName)
                 .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
                 .orElseThrow(() -> new NoSuchElementException(
                         "Active document service not found: " + serviceName));
+        if (registration.getManifestClientName() == null
+                || !registration.getManifestClientName().equalsIgnoreCase(caller.getClientName())) {
+            throw new SecurityException("API key does not belong to the ClientName mapped to this document service");
+        }
         return documentServiceClient.download(
                 registration,
                 required(request.get("downloadId"), "downloadId"),

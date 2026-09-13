@@ -36,10 +36,7 @@ public class ManagerPlaneAccess {
         // IP allowlisting is an optional per-user control and is independent of
         // manager-plane token enforcement. An empty allowlist means unrestricted.
         if (configuredIpOrCidr == null || configuredIpOrCidr.isBlank()) return true;
-        String forwarded = request.getHeader("X-Forwarded-For");
-        String clientIp = forwarded == null || forwarded.isBlank()
-                ? request.getRemoteAddr()
-                : forwarded.split(",")[0].trim();
+        String clientIp = TrustedProxyConfiguration.clientIp(request);
         return java.util.Arrays.stream(configuredIpOrCidr.split("[,;\\r\\n]+"))
                 .map(String::trim)
                 .filter(rule -> !rule.isEmpty())

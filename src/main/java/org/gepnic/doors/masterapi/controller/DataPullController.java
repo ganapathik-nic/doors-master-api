@@ -2,7 +2,7 @@ package org.gepnic.doors.masterapi.controller;
 
 import org.gepnic.doors.masterapi.dto.ApiResponse;
 import org.gepnic.doors.masterapi.dto.DataPullRequestDTO;
-import org.gepnic.doors.masterapi.entity.DataPullRequest;
+import org.gepnic.doors.masterapi.model.ExternalRequest;
 import org.gepnic.doors.masterapi.service.DataPullService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -41,8 +41,8 @@ public class DataPullController {
             dto.setRequestedBy(principal.getName());
             dto.setSampleJson(sampleJson);
 
-            DataPullRequest savedRequest = service.submitRequest(dto, file);
-            return ResponseEntity.ok(Map.of("success", true, "requestId", savedRequest.getRequestId()));
+            ExternalRequest savedRequest = service.submitRequest(dto, file);
+            return ResponseEntity.ok(Map.of("success", true, "requestId", savedRequest.getId()));
         } catch (Exception e) {
             log.error("CRITICAL ERROR: ", e);
             return ResponseEntity.status(500).body("Error: " + e.getMessage());

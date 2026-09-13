@@ -45,6 +45,7 @@ class ManagerPlaneAccessTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("127.0.0.1");
         request.addHeader("X-Forwarded-For", "198.51.100.42, 127.0.0.1");
+        request.setAttribute(TrustedProxyConfiguration.CLIENT_IP, "198.51.100.42");
         assertTrue(access.isVpnIpAllowed(request, "198.51.100.42"));
         assertFalse(access.isVpnIpAllowed(request, "127.0.0.1"));
     }

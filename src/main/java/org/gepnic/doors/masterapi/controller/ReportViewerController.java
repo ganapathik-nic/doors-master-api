@@ -56,7 +56,7 @@ public class ReportViewerController {
     private final ObjectMapper objectMapper = new ObjectMapper();
  @PostMapping("/execute")
 public ResponseEntity<?> executeReport(
-        @RequestBody ReportExecutionRequest request,
+        @jakarta.validation.Valid @RequestBody ReportExecutionRequest request,
         jakarta.servlet.http.HttpServletRequest httpRequest, 
         Principal principal) {
 
@@ -85,7 +85,6 @@ public ResponseEntity<?> executeReport(
             }
 
             // 🕵️‍♂️ CRITICAL: This MUST match the browser F12 console exactly
-            System.out.println("DOORS_DEBUG_KEY: [" + hybridKey + "]");
 
             String encryptedPayload = org.gepnic.doors.masterapi.util.EncryptionUtils.encrypt(jsonResponse, hybridKey);
 
@@ -96,7 +95,7 @@ public ResponseEntity<?> executeReport(
 
         } catch (Exception encryptEx) {
             log.error("Encryption Failure", encryptEx);
-            return ResponseEntity.ok(finalResponse);
+            throw new org.gepnic.doors.masterapi.exception.EncryptionException("Unable to protect report response", encryptEx);
         }
     } catch (Exception e) {
         return ResponseEntity.status(500).body(ApiResponse.error("Execution Failed", 500));
@@ -105,7 +104,7 @@ public ResponseEntity<?> executeReport(
 
     @PostMapping("/exports")
     public ResponseEntity<ApiResponse<Map<String, Object>>> startExport(
-            @RequestBody ReportExecutionRequest request,
+            @jakarta.validation.Valid @RequestBody ReportExecutionRequest request,
             Principal principal) {
         request.setPerformedBy(principal.getName());
         return ResponseEntity.accepted().body(ApiResponse.success(

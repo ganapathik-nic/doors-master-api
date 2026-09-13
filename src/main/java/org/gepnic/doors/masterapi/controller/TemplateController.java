@@ -41,6 +41,7 @@ public class TemplateController {
     private final DataPullRequestRepository dataPullRequestRepository;
     private final ClientQueryMapRepository clientQueryMapRepository;
     private final AgentRepository agentRepository;
+    private final org.gepnic.doors.masterapi.service.DataRequestAccess requestAccess;
 
     /**
      * 1. SUBMIT NEW PROPOSAL
@@ -49,8 +50,9 @@ public class TemplateController {
     @Transactional
   @PostMapping("/submit")
 public ResponseEntity<ApiResponse<Object>> submitTemplate(
-        @RequestBody SqlTemplate template,
+        @jakarta.validation.Valid @RequestBody org.gepnic.doors.masterapi.dto.TemplateProposalRequest request,
         Authentication authentication) {
+    SqlTemplate template = request.toNewEntity();
     if (authentication == null || !authentication.isAuthenticated()) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResponse.error("Authentication required", HttpStatus.UNAUTHORIZED.value()));
@@ -216,11 +218,26 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
     @PutMapping("/status/{id}")
     public ResponseEntity<ApiResponse<Object>> approveAndMap(
             @PathVariable Long id, 
-            @RequestBody Map<String, Object> payload) {
+            @RequestBody Map<String, Object> payload, Authentication authentication) {
         
         return sqlTemplateRepository.findById(id).map(template -> {
             String newStatus = (String) payload.get("status");
             String editedSql = (String) payload.get("sqlText");
+            if (!java.util.Set.of("PENDING", "APPROVED", "REJECTED", "DISABLED").contains(String.valueOf(newStatus)))
+                throw new IllegalArgumentException("Unsupported template status");
+            if ("APPROVED".equals(newStatus) && !"APPROVED".equals(template.getStatus())) {
+                if (!"PENDING".equals(template.getStatus())) throw new IllegalStateException("Only pending templates can be approved");
+                if (authentication.getName().equalsIgnoreCase(template.getProposerId()))
+                    throw new SecurityException("A different reviewer must approve the proposal");
+                if (editedSql != null && !editedSql.equals(template.getSqlText()))
+                    throw new SecurityException("Submit SQL changes for review before approval");
+                template.setApproverId(authentication.getName());
+            }
+            if (editedSql != null && !editedSql.equals(template.getSqlText())) {
+                if (!"PENDING".equals(newStatus)) throw new SecurityException("SQL changes must return to pending review");
+                template.setProposerId(authentication.getName());
+                template.setApproverId(null);
+            }
 
             if (payload.containsKey("uniqueName")) {
                 String requestedUniqueName = normalizeOptionalText(payload.get("uniqueName"));
@@ -253,6 +270,7 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
 
             template.setSqlText(editedSql != null ? editedSql : template.getSqlText());
             template.setStatus(newStatus);
+            if (!"APPROVED".equals(newStatus)) template.setAuthorizedAgents(java.util.List.of());
 
             // Report Catalogue metadata is edited from the Query Library after
             // approval. Only overwrite a field when the request contains it so
@@ -324,6 +342,7 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
 
     @GetMapping("/by-request/{requestId}")
     public ResponseEntity<ApiResponse<SqlTemplate>> getByRequest(@PathVariable Long requestId) {
+        requestAccess.requireRead(requestId);
         return sqlTemplateRepository.findByRequestId(requestId)
             .map(t -> ResponseEntity.ok(ApiResponse.success(t, "Found")))
             .orElse(ResponseEntity.status(404).body(ApiResponse.error("Not Found", 404)));
@@ -334,6 +353,7 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
      */
      @GetMapping("/requests/details/{requestId}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getRequestDetails(@PathVariable Long requestId) {
+        requestAccess.requireRead(requestId);
         log.info("DOORS-MASTER: Fetching source request details for REQ-{}", requestId);
         try {
             // Updated SQL to match your actual schema:

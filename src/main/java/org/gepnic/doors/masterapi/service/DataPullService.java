@@ -2,7 +2,7 @@ package org.gepnic.doors.masterapi.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.dto.DataPullRequestDTO;
-import org.gepnic.doors.masterapi.entity.DataPullRequest;
+import org.gepnic.doors.masterapi.model.ExternalRequest;
 import org.gepnic.doors.masterapi.repository.DataPullRequestRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -27,17 +27,17 @@ public class DataPullService {
      * Processes and stores a new data pull request with its binary attachment.
      */
     @Transactional
-    public DataPullRequest submitRequest(DataPullRequestDTO dto, MultipartFile file) throws IOException {
+    public ExternalRequest submitRequest(DataPullRequestDTO dto, MultipartFile file) throws IOException {
         log.info("DOORS-SERVICE: Submitting new request for title: {}", dto.getRequestTitle());
         
-        DataPullRequest request = new DataPullRequest();
+        ExternalRequest request = new ExternalRequest();
         request.setRequestTitle(dto.getRequestTitle());
         request.setRequestedBy(dto.getRequestedBy());
         request.setTargetAgentId(dto.getTargetAgentId());
         request.setJustification(dto.getJustification());
         request.setSampleJson(dto.getSampleJson());
         request.setStatus("SUBMITTED");
-        request.setCreatedAt(LocalDateTime.now());
+        request.setCreatedAt(java.time.OffsetDateTime.now());
 
         // Handle binary file storage directly in the database BYTEA/BLOB column
         if (file != null && !file.isEmpty()) {
@@ -52,7 +52,7 @@ public class DataPullService {
     /**
      * Retrieves request history for a specific external user.
      */
-    public List<DataPullRequest> getRequestsByUser(String username) {
+    public List<ExternalRequest> getRequestsByUser(String username) {
         log.info("DOORS-SERVICE: Fetching orchestration history for user: {}", username);
         return repository.findByRequestedByOrderByCreatedAtDesc(username);
     }
@@ -60,7 +60,7 @@ public class DataPullService {
     /**
      * Retrieves all requests for Data Manager oversight with basic status filtering.
      */
-    public List<DataPullRequest> getRequestsByStatus(String status) {
+    public List<ExternalRequest> getRequestsByStatus(String status) {
         return repository.findByStatusOrderByCreatedAtDesc(status);
     }
 

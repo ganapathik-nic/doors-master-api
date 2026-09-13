@@ -1,3 +1,5 @@
+package org.gepnic.doors.masterapi.dto;
+
 import java.util.List;
 import java.util.Map;
 

@@ -72,6 +72,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     if (userOpt.isPresent()) {
                         User user = userOpt.get();
+                        if (!Boolean.TRUE.equals(user.getIsActive()) || !"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+                            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Account is inactive");
+                            return;
+                        }
+                        rawRole = user.getRole();
                         String activeDbSid = user.getCurrentSessionId();
 
                         if (Boolean.TRUE.equals(user.getPasswordResetRequired())

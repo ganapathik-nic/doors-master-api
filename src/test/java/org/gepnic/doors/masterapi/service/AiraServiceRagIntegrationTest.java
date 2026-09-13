@@ -12,6 +12,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "DOORS_RUN_INTEGRATION_TESTS", matches = "true")
 class AiraServiceRagIntegrationTest {
 
     private AiraService airaService;

@@ -35,7 +35,8 @@ import java.util.stream.Collectors;
 public class ReportViewerService {
 
     private static final String ATTR_TOTAL_RECORD_COUNT = "TOTAL_RECORD_COUNT";
-    private static final String INFRA_TRANSIT_SECRET = "DOORS_VLAN_INTERNAL_SECRET_KEY_2026";
+    @org.springframework.beans.factory.annotation.Autowired
+    private AgentTransitEncryption transitEncryption;
     
     private final ObjectMapper objectMapper;
     private final ReportMappingRepository mappingRepository;
@@ -103,6 +104,16 @@ public class ReportViewerService {
                 : 100;
 
         try {
+            var executable = (request.getQueryId() != null
+                    ? mappingRepository.findById(request.getQueryId())
+                    : mappingRepository.findByUniqueName(request.getQueryUniqueName()))
+                    .filter(t -> Boolean.TRUE.equals(t.getIsActive()) && "APPROVED".equals(t.getStatus()))
+                    .orElseThrow(() -> new SecurityException("Template is not active and approved"));
+            if (request.getQueryUniqueName() != null && !request.getQueryUniqueName().equals(executable.getUniqueName()))
+                throw new SecurityException("Template identifiers do not match");
+            request.setQueryId(executable.getQueryId());
+            if (!org.gepnic.doors.masterapi.util.SqlSecurityValidator.isSafeSelectOnly(executable.getSqlText()))
+                throw new SecurityException("Template is not an allowed read-only query");
             // 🛡️ 1. Security Scan: Input Parameters
             validateParameters(request.getParams());
 
@@ -111,7 +122,7 @@ public class ReportViewerService {
                     ? resolveRegisteredDocumentAgent(request)
                     : resolveAgents(request);
 
-            String sql = resolveSql(request);
+            String sql = executable.getSqlText();
             Map<String, Object> sanitizedParams = sanitizeParams(request.getParams());
 
             for (String agentId : targetAgentIds) {
@@ -119,6 +130,7 @@ public class ReportViewerService {
                 try {
                     // Fetch the exact unique entity object from the master registry by UI ID selection
                     Agent agent = agentRepository.findById(agentIdTrimmed)
+                            .filter(a -> Boolean.TRUE.equals(a.getIsActive()))
                             .orElseThrow(() -> new NoSuchElementException("Agent registry record missing for ID: " + agentIdTrimmed));
 
                     String rawBaseUrl = agent.getBaseUrl() != null ? agent.getBaseUrl().trim() : "";
@@ -175,7 +187,7 @@ public class ReportViewerService {
                     payload.put("dbUser", targetUser);
                     
                     if (agent.getTargetDbPassword() != null && !agent.getTargetDbPassword().isBlank()) {
-                        String encryptedPass = EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(), INFRA_TRANSIT_SECRET);
+                        String encryptedPass = transitEncryption.encryptPassword(agent.getTargetDbPassword().trim());
                         payload.put("dbPasswordSecure", encryptedPass);
                     } else {
                         payload.put("dbPasswordSecure", "");
@@ -297,14 +309,6 @@ public class ReportViewerService {
             }
         }
         return requestedList;
-    }
-
-    private String resolveSql(ReportExecutionRequest request) {
-        String sql = (request.getQueryId() != null)
-                ? mappingRepository.findSqlByQueryId(request.getQueryId())
-                : mappingRepository.findSqlByUniqueName(request.getQueryUniqueName());
-        if (sql == null || sql.trim().isEmpty()) throw new IllegalStateException("SQL Template not found");
-        return sql;
     }
 
     private String buildEndpoint(String agentUrl) {

@@ -43,8 +43,27 @@ public class QueryApprovalService {
      */
     @Transactional
     public SqlTemplate proposeQuery(SqlTemplate template, String proposerId) {
+        if (template.getQueryId() != null) throw new SecurityException("Proposal cannot update an existing template");
+        if (!org.gepnic.doors.masterapi.util.SqlSecurityValidator.isSafeSelectOnly(template.getSqlText()))
+            throw new IllegalArgumentException("Only a single read-only SELECT is permitted");
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) throw new SecurityException("Authentication required");
+        if (auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("DEVELOPER")
+                || a.getAuthority().equalsIgnoreCase("ROLE_DEVELOPER"))) {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM data_pull_requests WHERE request_id = ? AND UPPER(status) = 'APPROVED'",
+                    Integer.class, template.getRequestId());
+            if (!"REQUEST".equalsIgnoreCase(template.getSubmissionSource()) || count == null || count != 1)
+                throw new SecurityException("An approved data request is required");
+        }
+        if (template.getUniqueName() == null || !template.getUniqueName().matches("[A-Za-z0-9][A-Za-z0-9 _-]{2,99}"))
+            throw new IllegalArgumentException("Invalid query name");
+        if (sqlTemplateRepository.existsByUniqueNameIgnoreCase(template.getUniqueName()))
+            throw new IllegalArgumentException("Query name already exists");
+        template.setAuthorizedAgents(java.util.List.of());
+        template.setApproverId(null);
         template.setStatus("PENDING");
-        template.setProposerId(proposerId);
+        template.setProposerId(auth.getName());
         template.setVersion(1);
         return sqlTemplateRepository.save(template);
     }
@@ -57,6 +76,10 @@ public class QueryApprovalService {
         SqlTemplate template = sqlTemplateRepository.findById(queryId)
                 .orElseThrow(() -> new RuntimeException("Query not found with ID: " + queryId));
         
+        if (!"PENDING".equals(template.getStatus())) throw new IllegalStateException("Only pending templates can be approved");
+        if (adminId.equalsIgnoreCase(template.getProposerId())) throw new SecurityException("A different reviewer must approve the proposal");
+        if (!org.gepnic.doors.masterapi.util.SqlSecurityValidator.isSafeSelectOnly(template.getSqlText()))
+            throw new IllegalArgumentException("Only a single read-only SELECT is permitted");
         template.setStatus("APPROVED");
         template.setApproverId(adminId);
         return sqlTemplateRepository.save(template);

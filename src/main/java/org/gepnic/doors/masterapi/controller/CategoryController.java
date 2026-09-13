@@ -39,7 +39,8 @@ public class CategoryController {
      * Adds a new category to the master table.
      */
     @PostMapping("/add")
-    public ResponseEntity<ApiResponse<Category>> addCategory(@RequestBody Category category) {
+    public ResponseEntity<ApiResponse<Category>> addCategory(@jakarta.validation.Valid @RequestBody org.gepnic.doors.masterapi.dto.CategoryRequest request) {
+        Category category = new Category(null, request.code(), request.name(), request.parentId());
         log.info("DOORS-MASTER: Registering new category: {}", category.getCode());
         
         // Ensure the code is stored in uppercase for system-wide consistency

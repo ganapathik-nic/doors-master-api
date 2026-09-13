@@ -87,6 +87,7 @@ class AiraKnowledgeServiceTest {
     }
 
     @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "DOORS_RUN_INTEGRATION_TESTS", matches = "true")
     void testVectorStoreLoadingAndSemanticSearch() {
         int indexedSegments = knowledgeService.reindexKnowledge();
 

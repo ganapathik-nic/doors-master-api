@@ -11,6 +11,9 @@ import java.time.OffsetDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ExternalRequest {
+    /** Keep the former DataPullRequest history JSON field for existing clients. */
+    @com.fasterxml.jackson.annotation.JsonProperty("requestId")
+    public Long getRequestId() { return id; }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

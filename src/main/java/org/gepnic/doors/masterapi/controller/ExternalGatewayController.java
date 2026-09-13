@@ -70,6 +70,7 @@ public class ExternalGatewayController {
     private final DoorsSigningCertificateRepository certRepository;
     private final TemplateContractService templateContractService;
     private final ClientSpecificDataSegregationService dataSegregationService;
+    private final org.gepnic.doors.masterapi.service.ApiClientExecutionPolicy executionPolicy;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private static final Map<String, String> keyRegistryCache = new ConcurrentHashMap<>();
@@ -497,6 +498,7 @@ public class ExternalGatewayController {
         String clientFingerprint = payload.get("clientKeyFingerprint");
 
         ApiClient client = apiClientRepository.findByApiKey(apiKey)
+                .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
                 .orElseThrow(() -> new SecurityException("Unauthorized credentials token rejection."));
 
         String registeredFingerprint = null;
@@ -529,7 +531,7 @@ public class ExternalGatewayController {
                                    "SET status_code = 500, " +
                                    "    error_code = ?, " +
                                    "    error_message = ? " +
-                                   "WHERE trace_id = ?";
+                                   "WHERE trace_id = ? AND username = ?";
                 
                 String formattedError = String.format(
                         "Client cryptographic validation failed. Stage=%s; Diagnosis=%s; Exception=%s: %s; " +
@@ -537,12 +539,17 @@ public class ExternalGatewayController {
                         safeDiagnosticValue(failureStage), diagnosis, safeDiagnosticValue(faultType),
                         safeDiagnosticValue(errorMessage), safeDiagnosticValue(registeredFingerprint),
                         safeDiagnosticValue(clientFingerprint));
-                int rowsUpdated = jdbcTemplate.update(updateSql, errorCode, formattedError, traceId.trim());
+                if (!Boolean.TRUE.equals(client.getIsActive())) throw new SecurityException("Inactive client");
+                int rowsUpdated = jdbcTemplate.update(updateSql, errorCode, formattedError, traceId.trim(), client.getClientName());
+                if (rowsUpdated != 1) throw new SecurityException("Unknown or unowned trace");
                 
                 log.info("✅ TELEMETRY AUDIT UPDATED: Trace ID [{}] status changed to 500 (Updated Rows: {})", traceId, rowsUpdated);
 
+            } catch (SecurityException denied) {
+                throw denied;
             } catch (Exception e) {
-                log.error("❌ Failed to update execution audit log for trace_id [{}]: {}", traceId, e.getMessage(), e);
+                log.error("Failed to update owned execution audit", e);
+                throw new IllegalStateException("Unable to record telemetry");
             }
         }
 
@@ -618,6 +625,7 @@ public class ExternalGatewayController {
         }
 
         String authenticatedClient = client.getClientName();
+        executionPolicy.authorize(client, uniqueName);
         boolean isEncryptionEnabled = client.isEncryptionEnabled();
 
         // 🚀 2. RESOLVE CLIENT PUBLIC KEY (Handshake Cache or Database)

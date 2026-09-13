@@ -18,17 +18,28 @@ import java.util.Map;
 @NoArgsConstructor
 public class ReportExecutionRequest implements Serializable {
 
+    @jakarta.validation.constraints.Positive
     private Long queryId;           // Used by internal UI
 
+    @jakarta.validation.constraints.Size(max=100)
     private String queryUniqueName; // Used by External Gateway/API
 
+    @jakarta.validation.constraints.Size(max=4096)
     private String agentId;         // "ALL" or "Node-01,Node-02"
 
-    private String performedBy;     // User or Client System Name
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    private String performedBy;     // Set by the server, never deserialized from the request.
 
+    @jakarta.validation.constraints.Size(max=100)
     private Map<String, Object> params; // SQL parameters map
 
+    @jakarta.validation.constraints.Min(1)
     private Integer page;
 
+    @jakarta.validation.constraints.Min(1) @jakarta.validation.constraints.Max(200)
     private Integer pageSize;
+
+    @jakarta.validation.constraints.AssertTrue(message="A query ID or name is required")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isQuerySelected() { return queryId != null || (queryUniqueName != null && !queryUniqueName.isBlank()); }
 }

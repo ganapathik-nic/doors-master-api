@@ -1,6 +1,6 @@
 package org.gepnic.doors.masterapi.repository;
 
-import org.gepnic.doors.masterapi.entity.DataPullRequest;
+import org.gepnic.doors.masterapi.model.ExternalRequest;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -11,34 +11,33 @@ import java.util.List;
 
 
 @Repository
-public interface DataPullRequestRepository extends JpaRepository<DataPullRequest, Long> {
+public interface DataPullRequestRepository extends JpaRepository<ExternalRequest, Long> {
 
     /**
      * Fetches all requests submitted by a specific user for their history view.
      */
-    List<DataPullRequest> findByRequestedByOrderByCreatedAtDesc(String requestedBy);
+    List<ExternalRequest> findByRequestedByOrderByCreatedAtDesc(String requestedBy);
 
     /**
      * Fetches requests based on their lifecycle status (SUBMITTED, APPROVED, etc.).
      */
-    List<DataPullRequest> findByStatusOrderByCreatedAtDesc(String status);
+    List<ExternalRequest> findByStatusOrderByCreatedAtDesc(String status);
 
     /**
      * Optimized query for the Data Manager list view.
      * Excludes the heavy 'attachmentData' (BLOB) to save memory during listing.
      */
   
- @Query("SELECT r.requestId, r.requestedBy, r.targetAgentId, r.status, r.createdAt, r.queryId, r.rejectionReason " +
-       "FROM DataPullRequest r WHERE r.status = :status")
+ @Query("SELECT r.id, r.requestedBy, r.targetAgentId, r.status, r.createdAt, r.queryId, r.rejectionReason " +
+       "FROM ExternalRequest r WHERE r.status = :status")
 List<Object[]> findSummaryByStatus(@Param("status") String status);
   
  @Modifying(clearAutomatically = true, flushAutomatically = true)
 @Transactional
-@Query("UPDATE DataPullRequest r SET r.status = :status, r.queryId = :qId WHERE r.requestId = :id")
+@Query("UPDATE ExternalRequest r SET r.status = :status, r.queryId = :qId WHERE r.id = :id")
 int updateStatusAndLinkQuery(@Param("id") Long id, @Param("status") String status, @Param("qId") Long qId);
  
 @Modifying
-@Query("UPDATE DataPullRequest r SET r.status = :status WHERE r.requestId = :id")
+@Query("UPDATE ExternalRequest r SET r.status = :status WHERE r.id = :id")
 void updateStatus(@Param("id") Long id, @Param("status") String status);
 }
- 

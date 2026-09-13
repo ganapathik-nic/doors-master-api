@@ -43,6 +43,10 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         // 🚀 GATE 1: MANDATORY IP CHECK
         if (clientOpt.isPresent()) {
             ApiClient client = clientOpt.get();
+            if (!Boolean.TRUE.equals(client.getIsActive())) {
+                response.sendError(403, "Inactive API client");
+                return false;
+            }
             if (!client.getIpWhitelist().isEmpty() && !client.getIpWhitelist().contains(incomingIp)) {
                 String traceId = logSecurityFailure(
                         request, "IP address is not authorized", client, 403, "DOORS-AUTH-IP-DENIED");
@@ -143,8 +147,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty()) ip = request.getRemoteAddr();
+        String ip = TrustedProxyConfiguration.clientIp(request);
         if ("0:0:0:0:0:0:0:1".equals(ip)) ip = "127.0.0.1";
         return ip.split(",")[0].trim();
     }

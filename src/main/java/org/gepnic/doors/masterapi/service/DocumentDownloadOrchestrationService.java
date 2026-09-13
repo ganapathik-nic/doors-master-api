@@ -35,12 +35,14 @@ public class DocumentDownloadOrchestrationService {
                 .filter(value -> "ACTIVE".equals(value.getStatus()))
                 .orElseThrow(() -> new NoSuchElementException("Active document policy not found: " + policyCode));
 
+        DocumentPolicyAccess.requireClient(policy, client);
         Map<String, Object> eligibility = objectMap(request.get("eligibility"), "eligibility");
         Map<String, Object> document = objectMap(request.get("document"), "document");
         String documentType = required(document.get("documentType"), "document.documentType").toUpperCase(Locale.ROOT);
         JsonNode mapping = findMapping(policy, documentType);
 
         Map<String, Object> params = new LinkedHashMap<>(eligibility);
+        params.put("authenticatedClientId", client.getClientId());
         params.put("documentType", documentType);
         params.put("downloadId", required(document.get("downloadId"), "document.downloadId"));
         params.put("fileName", safeFileName(required(document.get("fileName"), "document.fileName")));
@@ -70,6 +72,30 @@ public class DocumentDownloadOrchestrationService {
                 "SELECT COUNT(*) FROM user_authorized_agents WHERE user_name = ? AND agent_id = ?",
                 Integer.class, client.getClientName(), agentId);
         if (count == null || count == 0) throw new SecurityException("API Client is not authorized for Agent " + agentId);
+    }
+
+    public void authorizeRegisteredDocument(ApiClient client, DocumentServiceRegistration registration,
+            Map<String, Object> document, Map<String, Object> approvedParameters) {
+        if (registration.getDocumentDownloadPolicyCode() == null) return;
+        var policy = policyRepository.findByPolicyCodeIgnoreCase(registration.getDocumentDownloadPolicyCode())
+                .orElseThrow(() -> new SecurityException("Unknown document policy"));
+        DocumentPolicyAccess.requireClient(policy, client);
+        var mapping = findMapping(policy, required(approvedParameters.get("documentType"), "documentType"));
+        if (!mapping.path("serviceDocCode").asText().equals(document.get("docCode"))
+                || !mapping.path("packetType").asText().equals(document.get("packetType")))
+            throw new SecurityException("Document does not match the policy mapping");
+        Map<String, Object> params = new LinkedHashMap<>(approvedParameters);
+        params.put("authenticatedClientId", client.getClientId());
+        params.put("downloadId", document.get("downloadId"));
+        params.put("fileName", document.get("fileName"));
+        var decision = agentExecutionService.evaluateDocumentEligibility(registration.getAgentId(), policy, params);
+        if (!Boolean.TRUE.equals(decision.get("success")) || !"ALLOW".equals(decision.get("decision")))
+            throw new SecurityException("Document policy denied this document");
+        var result = objectMap(decision.get("result"), "eligibility result");
+        resultValueOrDefault(result, mapping.path("downloadIdColumn").asText("download_id"),
+                required(document.get("downloadId"), "downloadId"));
+        resultValueOrDefault(result, mapping.path("fileNameColumn").asText("file_name"),
+                required(document.get("fileName"), "fileName"));
     }
 
     private DocumentServiceRegistration resolveDocumentService(String agentId, Map<String, Object> document) {
@@ -115,7 +141,10 @@ public class DocumentDownloadOrchestrationService {
 
     private String resultValueOrDefault(Map<String, Object> result, String column, String defaultValue) {
         Object value = result.get(column.toLowerCase(Locale.ROOT));
-        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
+        if (value == null || String.valueOf(value).isBlank())
+            throw new SecurityException("Eligibility must resolve the exact document: " + column);
+        if (!defaultValue.equals(String.valueOf(value)))
+            throw new SecurityException("Eligibility resolved a different document");
         return required(value, "Eligibility result column " + column);
     }
 

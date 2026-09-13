@@ -148,6 +148,6 @@ public class AiraContextService {
 
     private static String clean(String value) {
         if (value == null || value.isBlank()) return "not specified";
-        return value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return AiraPromptBoundary.clean(value, 2000).replaceAll("[\\r\\n\\t]+", " ").trim();
     }
 }

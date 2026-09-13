@@ -23,6 +23,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/master/infrastructure")
 public class InfrastructureController {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.gepnic.doors.masterapi.service.AgentTransitEncryption transitEncryption;
 
     private final AgentRepository agentRepository;
     private final SqlTemplateRepository sqlTemplateRepository;
@@ -90,14 +92,19 @@ public class InfrastructureController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> registerAgent(@RequestBody Agent agent) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> registerAgent(
+            @jakarta.validation.Valid @RequestBody org.gepnic.doors.masterapi.dto.AgentConfigurationRequest request,
+            java.security.Principal principal) {
+        Agent agent = request.toEntity();
+        if (agent.getAgentId() == null || agentRepository.existsById(agent.getAgentId()))
+            throw new IllegalArgumentException("A new unique Agent ID is required");
+        agent.setCreatedBy(principal.getName());
+        agent.setUpdatedBy(principal.getName());
         agent.setIsActive(true);
         agent.setCreatedAt(LocalDateTime.now());
         agent.setUpdatedAt(LocalDateTime.now());
         
         // Audit tracking for the infrastructure registry
-        if (agent.getCreatedBy() == null) agent.setCreatedBy("GANAPATHI");
-        if (agent.getUpdatedBy() == null) agent.setUpdatedBy("GANAPATHI");
 
         // Explicit structural model default protection
         if (agent.getAgentType() == null) agent.setAgentType("INDIVIDUAL");
@@ -114,8 +121,11 @@ public class InfrastructureController {
     @PutMapping("/update/{agentId}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateAgent(
             @PathVariable String agentId, 
-            @RequestBody Agent agentDetails,
+            @jakarta.validation.Valid @RequestBody org.gepnic.doors.masterapi.dto.AgentConfigurationRequest request,
             java.security.Principal principal) {
+        Agent agentDetails = request.toEntity();
+        if (agentDetails.getAgentId() != null && !agentId.equals(agentDetails.getAgentId()))
+            throw new IllegalArgumentException("Agent identifiers do not match");
         
         // Resolve identity dynamically from security context session
         String currentUsername = (principal != null) ? principal.getName() : "SYSTEM";
@@ -196,21 +206,21 @@ public class InfrastructureController {
     }
 
     @PutMapping("/deactivate/{agentId}")
-    public ResponseEntity<ApiResponse<String>> deactivate(@PathVariable String agentId) {
+    public ResponseEntity<ApiResponse<String>> deactivate(@PathVariable String agentId, java.security.Principal principal) {
         Agent agent = agentRepository.findById(agentId).orElseThrow();
         agent.setIsActive(false);
         agent.setUpdatedAt(LocalDateTime.now());
-        agent.setUpdatedBy("GANAPATHI");
+        agent.setUpdatedBy(principal.getName());
         agentRepository.save(agent);
         return ResponseEntity.ok(ApiResponse.success(null, "Deactivated"));
     }
 
     @PutMapping("/restore/{agentId}")
-    public ResponseEntity<ApiResponse<String>> restore(@PathVariable String agentId) {
+    public ResponseEntity<ApiResponse<String>> restore(@PathVariable String agentId, java.security.Principal principal) {
         Agent agent = agentRepository.findById(agentId).orElseThrow();
         agent.setIsActive(true);
         agent.setUpdatedAt(LocalDateTime.now());
-        agent.setUpdatedBy("GANAPATHI");
+        agent.setUpdatedBy(principal.getName());
         agentRepository.save(agent);
         return ResponseEntity.ok(ApiResponse.success(null, "Restored"));
     }
@@ -293,8 +303,7 @@ public class InfrastructureController {
                 payload.put("dbName", agent.getTargetDbName().trim());
                 payload.put("dbUser", agent.getTargetDbUser().trim());
                 payload.put("dbPasswordSecure", hasText(agent.getTargetDbPassword())
-                        ? EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(),
-                                "DOORS_VLAN_INTERNAL_SECRET_KEY_2026")
+                        ? transitEncryption.encryptPassword(agent.getTargetDbPassword().trim())
                         : "");
 
                 ProbeResult databaseResult = client.post()

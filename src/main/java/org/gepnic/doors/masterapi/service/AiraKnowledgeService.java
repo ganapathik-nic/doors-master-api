@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.ollama.OllamaEmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
@@ -51,6 +50,7 @@ public class AiraKnowledgeService {
     private final AiraProperties properties;
     private final ResourceLoader resourceLoader;
     private final ObjectMapper objectMapper;
+    private final AiraOllamaClient ollama;
 
     private volatile InMemoryEmbeddingStore<TextSegment> embeddingStore;
     private volatile EmbeddingModel embeddingModel;
@@ -62,6 +62,7 @@ public class AiraKnowledgeService {
         this.properties = properties;
         this.resourceLoader = resourceLoader;
         this.objectMapper = objectMapper;
+        this.ollama = new AiraOllamaClient(properties, objectMapper);
     }
 
     @PostConstruct
@@ -77,15 +78,9 @@ public class AiraKnowledgeService {
 
     public synchronized void initEmbeddingModel() {
         if (this.embeddingModel == null) {
-            log.info("Initializing OllamaEmbeddingModel [model: {}, baseUrl: {}]...",
-                    properties.getEmbeddingModel(), properties.getBaseUrl());
-            this.embeddingModel = OllamaEmbeddingModel.builder()
-                    .baseUrl(properties.getBaseUrl())
-                    .modelName(properties.getEmbeddingModel())
-                    .timeout(Duration.ofSeconds(60))
-                    .logRequests(false)
-                    .logResponses(false)
-                    .build();
+            log.info("Initializing pinned Ollama embedding transport [model: {}]", ollama.embeddingModel());
+            this.embeddingModel = segments -> dev.langchain4j.model.output.Response.from(
+                    segments.stream().map(segment -> Embedding.from(ollama.embed(segment.text()))).toList());
         }
     }
 
@@ -140,8 +135,8 @@ public class AiraKnowledgeService {
                     snippets.add(match.embedded().text());
                 }
             }
-            log.debug("Found {} knowledge segments for query '{}' (minScore: {})", snippets.size(), query, minScore);
-            return snippets;
+            log.debug("Found {} knowledge segments (minScore: {})", snippets.size(), minScore);
+            return snippets; // The generation boundary sanitizes after relevance prioritization.
         } catch (Exception e) {
             log.warn("Semantic knowledge retrieval failed: {}", e.getMessage());
             return Collections.emptyList();
@@ -152,6 +147,7 @@ public class AiraKnowledgeService {
      * Parse the Markdown operational guide and embed all sections into the vector store.
      */
     public synchronized int reindexKnowledge() {
+        if (!properties.isEnabled()) throw new IllegalStateException("AIra is disabled");
         if (!indexingInProgress.compareAndSet(false, true)) {
             log.warn("Knowledge reindexing is already in progress.");
             return this.segmentCount;
@@ -195,11 +191,22 @@ public class AiraKnowledgeService {
                     segments.size(), properties.getEmbeddingModel());
 
             InMemoryEmbeddingStore<TextSegment> newStore = new InMemoryEmbeddingStore<>();
+            int indexed = 0;
             for (int i = 0; i < segments.size(); i++) {
-                TextSegment segment = segments.get(i);
+                TextSegment segment;
+                try {
+                    String safe = AiraPromptBoundary.clean(segments.get(i).text(), 64_000);
+                    if (safe.isBlank()) continue;
+                    segment = TextSegment.from(safe);
+                } catch (SecurityException | IllegalArgumentException rejected) {
+                    log.warn("Quarantined AIra source segment at index {}", i);
+                    continue;
+                }
                 Embedding embedding = embeddingModel.embed(segment).content();
                 newStore.add(embedding, segment);
+                indexed++;
             }
+            if (indexed == 0) throw new IllegalStateException("No accepted AIra knowledge segments");
 
             Path storePath = Paths.get(properties.getVectorStorePath());
             if (storePath.getParent() != null) {
@@ -209,7 +216,7 @@ public class AiraKnowledgeService {
             newStore.serializeToFile(storePath);
 
             this.embeddingStore = newStore;
-            this.segmentCount = segments.size();
+            this.segmentCount = indexed;
             this.ready = true;
 
             log.info("DOORS Vector Knowledge Base successfully indexed {} segments to {}",

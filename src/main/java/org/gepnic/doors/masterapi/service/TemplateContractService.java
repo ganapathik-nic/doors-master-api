@@ -171,6 +171,8 @@ public class TemplateContractService {
     @Transactional
     public Map<String, Object> approve(Long contractId, String actor, String comment) {
         TemplateContract contract = requireContract(contractId);
+        if (actor.equalsIgnoreCase(contract.getSubmittedBy()))
+            throw new SecurityException("A different reviewer must approve the contract");
         if (!"IN_REVIEW".equals(contract.getContractStatus())) {
             throw new IllegalStateException("Only contracts in review can be approved");
         }

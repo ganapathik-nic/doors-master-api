@@ -22,6 +22,7 @@ import org.springframework.http.ResponseEntity;
 public class OrchestrationRequestService {
 
     private final ExternalRequestRepository repository;
+    private final DataRequestAccess access;
 
     @Transactional
     public ExternalRequest submitRequest(String title, String agentId, String justification, 
@@ -85,6 +86,7 @@ public List<ExternalRequest> getRequestsByUser(String username) {
     }
 
     public ResponseEntity<Resource> downloadRequestAttachment(Long id) {
+        access.requireRead(id);
         // FIXED: Changed type to ExternalRequest to match your model
         ExternalRequest request = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Request not found with id: " + id));

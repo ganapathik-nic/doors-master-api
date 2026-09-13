@@ -1,44 +1,35 @@
 package org.gepnic.doors.masterapi.controller;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.gepnic.doors.masterapi.client.AgentClient;
-import org.springframework.security.core.context.ReactiveSecurityContextHolder;
-import org.springframework.security.core.Authentication;
+import org.gepnic.doors.masterapi.repository.AgentRepository;
+import org.gepnic.doors.masterapi.repository.SqlTemplateRepository;
+import org.gepnic.doors.masterapi.service.ReportViewerService;
+import org.gepnic.doors.masterapi.dto.ReportExecutionRequest;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
-
-import java.util.Collections;
+import java.security.Principal;
 import java.util.Map;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/master")
 @RequiredArgsConstructor
 public class MasterController {
+    private final AgentRepository agents;
+    private final SqlTemplateRepository templates;
+    private final ReportViewerService reports;
 
-    private final AgentClient agentClient;
-
-    /**
-     * STREAMS DATA FROM AGENT NODES
-     * Dynamically resolves the User ID from the Security Context to avoid hardcoding "ADMIN".
-     */
+    /** Compatibility adapter: caller URL/SQL may only identify an approved registered pair. */
     @PostMapping("/stream")
-    public Flux<Object> handleStream(
-            @RequestParam String url, 
-            @RequestParam String sql) {
-
-        // 1. Pull the authenticated username from the Reactive Context
-        return ReactiveSecurityContextHolder.getContext()
-            .map(securityContext -> securityContext.getAuthentication().getName())
-            .defaultIfEmpty("SYSTEM_AUTO") // Fallback if ran via internal task
-            .flatMapMany(resolvedUser -> {
-                
-                log.info("DOORS-MASTER: User '{}' requested stream from node {}", resolvedUser, url);
-
-                // 2. FIX: Added Collections.emptyMap() to satisfy the 4-argument signature 
-                // in AgentClient.streamData(String, String, String, Map)
-                return agentClient.streamData(url, sql, resolvedUser, Collections.emptyMap());
-            });
+    public Flux<Object> handleStream(@RequestParam String url, @RequestParam String sql, Principal principal) {
+        var agent = agents.findByIsActiveTrue().stream()
+                .filter(a -> url.equals(a.getBaseUrl())).findFirst()
+                .orElseThrow(() -> new SecurityException("Unregistered execution destination"));
+        var template = templates.findByStatusAndIsActive("APPROVED", true).stream()
+                .filter(t -> sql.equals(t.getSqlText()) && t.getAuthorizedAgents().contains(agent.getAgentId()))
+                .findFirst().orElseThrow(() -> new SecurityException("No approved registered query"));
+        var result = reports.executeReport(ReportExecutionRequest.builder()
+                .queryId(template.getQueryId()).agentId(agent.getAgentId())
+                .performedBy(principal.getName()).params(Map.of()).build());
+        return Flux.fromIterable(result.data()).cast(Object.class);
     }
 }

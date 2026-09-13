@@ -10,6 +10,7 @@ import java.util.List;
 
 @Repository
 public interface ReportMappingRepository extends JpaRepository<SqlTemplate, Long> {
+    java.util.Optional<SqlTemplate> findByUniqueName(String uniqueName);
 
     /**
      * 1. TEMPLATE LIST: Finds templates where at least one authorized agent 
@@ -19,7 +20,7 @@ public interface ReportMappingRepository extends JpaRepository<SqlTemplate, Long
                    "FROM sql_templates t " +
                    "JOIN sql_template_authorized_agents staa ON t.query_id = staa.query_id " +
                    "JOIN user_authorized_agents uaa ON staa.agent_id = uaa.agent_id " +
-                   "WHERE LOWER(TRIM(uaa.user_name)) = LOWER(TRIM(:username)) " +
+                   "WHERE uaa.user_name = :username " +
                    "AND t.is_active = true " +
                    "AND UPPER(t.status) = 'APPROVED'", 
            nativeQuery = true)
@@ -33,7 +34,9 @@ public interface ReportMappingRepository extends JpaRepository<SqlTemplate, Long
                    "FROM agents a " +
                    "JOIN user_authorized_agents uaa ON a.agent_id = uaa.agent_id " +
                    "JOIN sql_template_authorized_agents staa ON a.agent_id = staa.agent_id " +
+                   "JOIN sql_templates t ON t.query_id = staa.query_id " +
                    "WHERE uaa.user_name = :username " +
+                   "AND t.is_active = true AND t.status = 'APPROVED' " +
                    "AND staa.query_id = :queryId " +
                    "AND a.is_active = true", 
            nativeQuery = true)

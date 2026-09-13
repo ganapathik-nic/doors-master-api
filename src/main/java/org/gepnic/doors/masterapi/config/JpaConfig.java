@@ -13,6 +13,8 @@ public class JpaConfig {
     @Bean
     public AuditorAware<String> auditorProvider() {
         // For now, we return a system name. Later, this can pull from Spring Security Context
-        return () -> Optional.of("DOORS_ADMIN"); 
+        return () -> Optional.ofNullable(org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication())
+                .filter(auth -> auth.isAuthenticated() && !(auth instanceof org.springframework.security.authentication.AnonymousAuthenticationToken))
+                .map(org.springframework.security.core.Authentication::getName);
     }
 }

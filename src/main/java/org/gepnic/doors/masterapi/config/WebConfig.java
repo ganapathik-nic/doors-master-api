@@ -1,9 +1,5 @@
 package org.gepnic.doors.masterapi.config;
 
-import io.netty.handler.logging.LogLevel;
-import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,7 +11,6 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import reactor.netty.http.client.HttpClient;
-import reactor.netty.transport.logging.AdvancedByteBufFormat;
 
 import javax.net.ssl.SSLException;
 
@@ -28,17 +23,12 @@ public class WebConfig implements WebMvcConfigurer {
     /**
      * WebClient Builder configuration:
      * 1. 100MB Memory Buffer for heavy payload responses.
-     * 2. SSL Trust Bypass for internal server loops.
+     * 2. Normal TLS trust and hostname validation using the configured JVM trust store.
      */
     @Bean
     public WebClient.Builder webClientBuilder() throws SSLException {
-        SslContext sslContext = SslContextBuilder.forClient()
-                .trustManager(InsecureTrustManagerFactory.INSTANCE)
-                .build();
-
         HttpClient httpClient = HttpClient.create()
-                .wiretap("reactor.netty.http.client.HttpClient", LogLevel.DEBUG, AdvancedByteBufFormat.TEXTUAL)
-                .secure(t -> t.sslContext(sslContext));
+                .secure();
 
         ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(clientCodecConfigurer -> clientCodecConfigurer
@@ -79,6 +69,9 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(apiKeyInterceptor)
                 .addPathPatterns("/api/v1/external/**")
                 .addPathPatterns("/api/v1/master/gateway/orchestrate/**")
+                .addPathPatterns("/api/v1/master/reports/orchestrate/**")
+                .addPathPatterns("/api/v1/master/gateway/documents/**")
+                .addPathPatterns("/api/v1/master/gateway/telemetry/**")
                 .addPathPatterns("/api/v1/reports/execute/**");
     }
 

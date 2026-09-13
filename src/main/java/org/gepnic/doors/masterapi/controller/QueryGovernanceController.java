@@ -91,11 +91,12 @@ public class QueryGovernanceController {
      */
     @PostMapping("/propose")
 public ResponseEntity<ApiResponse<SqlTemplate>> propose(
-        @RequestBody SqlTemplate template, 
+        @jakarta.validation.Valid @RequestBody org.gepnic.doors.masterapi.dto.TemplateProposalRequest request,
         @RequestParam(required = false) String userId,
         Authentication authentication) {
     
     // Call your existing service logic
+    SqlTemplate template = request.toNewEntity();
     SqlTemplate proposed = approvalService.proposeQuery(template, authentication.getName());
     
     // Return the standardized enterprise response

@@ -31,6 +31,8 @@ public class AgentExecutionService {
     private final WebClient.Builder webClientBuilder;
     private final JdbcTemplate jdbcTemplate; 
     private final RestTemplate restTemplate; 
+    @org.springframework.beans.factory.annotation.Autowired
+    private AgentTransitEncryption transitEncryption;
 
     private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
         "(?i)(--|;|\\bUNION\\b|\\bSELECT\\b|\\bDROP\\b|\\bOR\\b\\s+\\d+=\\d+|\\bUPDATE\\b|\\bDELETE\\b)", 
@@ -41,7 +43,7 @@ public class AgentExecutionService {
         String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
         
         // Securely fetch authorized agents for the user
-        String authSql = "SELECT agent_id FROM user_authorized_agents WHERE user_name ILIKE ?";
+        String authSql = "SELECT agent_id FROM user_authorized_agents WHERE user_name = ?";
         List<String> userAuthorizedAgents = jdbcTemplate.queryForList(authSql, String.class, currentUsername);
 
         List<String> queryAllowedAgents = template.getAuthorizedAgents();
@@ -156,6 +158,8 @@ public class AgentExecutionService {
                 decodedSql = sanitizedPayload; 
             }
         }
+        if (!org.gepnic.doors.masterapi.util.SqlSecurityValidator.isSafeSelectOnly(decodedSql))
+            throw new SecurityException("Only a single read-only SELECT is permitted");
         agentPayload.put("sql", decodedSql);
         agentPayload.put("params", params != null ? params : new HashMap<>());
         agentPayload.put("instanceCode", extractedInstanceCode);
@@ -170,7 +174,7 @@ public class AgentExecutionService {
         try {
             // 🚀 THE FIX: Checked exception source is now safely wrapped inside the error handler frame
             if (agent.getTargetDbPassword() != null && !agent.getTargetDbPassword().isBlank()) {
-                String encryptedPass = EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(), "DOORS_VLAN_INTERNAL_SECRET_KEY_2026");
+                String encryptedPass = transitEncryption.encryptPassword(agent.getTargetDbPassword().trim());
                 agentPayload.put("dbPasswordSecure", encryptedPass);
             } else {
                 agentPayload.put("dbPasswordSecure", "");
@@ -231,7 +235,7 @@ public class AgentExecutionService {
         payload.put("dbUser", agent.getTargetDbUser());
         try {
             payload.put("dbPasswordSecure", agent.getTargetDbPassword() == null ? "" :
-                    EncryptionUtils.encrypt(agent.getTargetDbPassword().trim(), "DOORS_VLAN_INTERNAL_SECRET_KEY_2026"));
+                    transitEncryption.encryptPassword(agent.getTargetDbPassword().trim()));
             @SuppressWarnings("unchecked")
             Map<String, Object> response = restTemplate.postForObject(endpoint, payload, Map.class);
             if (response == null) throw new IllegalStateException("Agent returned an empty eligibility response");

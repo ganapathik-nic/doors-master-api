@@ -40,7 +40,8 @@ class DocumentManifestServiceTest {
         reportViewerService = mock(ReportViewerService.class);
         documentServiceClient = mock(RegisteredDocumentServiceClient.class);
         service = new DocumentManifestService(clientRepository, registrationRepository,
-                reportViewerService, new ObjectMapper(), documentServiceClient);
+                reportViewerService, new ObjectMapper(), documentServiceClient, mock(DocumentGrantService.class),
+                mock(DocumentDownloadOrchestrationService.class));
 
         registration = new DocumentServiceRegistration();
         registration.setServiceName("AOC_DOCUMENTS");

@@ -199,6 +199,11 @@ public class AdminUserController {
                                         Authentication authentication) {
         return userRepository.findById(id).map(user -> {
             if (body.containsKey("role")) {
+                if (isSecurityAdminRole(user.getRole())
+                        || !(isSecurityAdmin(authentication) || canGovern(authentication, user))) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                            .body(Map.of("message", "You cannot change this account's role"));
+                }
                 String requestedRole = bodyValue(body, "role");
                 if (isSecurityAdminRole(requestedRole)) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN)

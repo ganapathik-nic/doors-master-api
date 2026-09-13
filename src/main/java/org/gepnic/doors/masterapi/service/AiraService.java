@@ -1,9 +1,6 @@
 package org.gepnic.doors.masterapi.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.model.ollama.OllamaChatModel;
-import dev.langchain4j.service.AiServices;
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.config.AiraProperties;
 import org.gepnic.doors.masterapi.model.UnifiedAuditLog;
@@ -11,11 +8,6 @@ import org.gepnic.doors.masterapi.repository.UnifiedAuditLogRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,7 +22,7 @@ public class AiraService {
     private final AiraKnowledgeService knowledgeService;
     private final UnifiedAuditLogRepository auditRepository;
     private final ObjectMapper objectMapper;
-    private final AiraAgent agent;
+    private final AiraOllamaClient ollama;
     private final AiraOperationalAnswerService operationalAnswerService;
 
     @Autowired
@@ -44,19 +36,7 @@ public class AiraService {
         this.auditRepository = auditRepository;
         this.objectMapper = objectMapper;
         this.operationalAnswerService = operationalAnswerService;
-        this.agent = AiServices.builder(AiraAgent.class)
-                .chatLanguageModel(OllamaChatModel.builder()
-                        .baseUrl(properties.getBaseUrl())
-                        .modelName(properties.getModel())
-                        .temperature(0.0)
-                        .numPredict(384)
-                        .numCtx(8192)
-                        .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
-                        .maxRetries(0)
-                        .logRequests(false)
-                        .logResponses(false)
-                        .build())
-                .build();
+        this.ollama = new AiraOllamaClient(properties, objectMapper);
     }
 
     AiraService(AiraProperties properties, AiraContextService contextService,
@@ -79,16 +59,14 @@ public class AiraService {
                                     String clientIp, boolean refineWithAi) {
         long started = System.nanoTime();
         if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("Prompt cannot be empty");
-        String sanitizedPrompt = prompt.trim();
-        if (sanitizedPrompt.length() > properties.getMaxPromptChars()) {
-            throw new IllegalArgumentException("Prompt exceeds the allowed length");
-        }
+        String sanitizedPrompt = AiraPromptBoundary.clean(prompt, Math.min(16_000, properties.getMaxPromptChars()));
+        if (sanitizedPrompt.isBlank()) throw new IllegalArgumentException("Prompt has no accepted text");
 
         try {
             AiraOperationalIntent intent = AiraOperationalIntent.classify(sanitizedPrompt);
             if (intent.source() == AiraOperationalIntent.Source.OPERATIONAL) {
                 Map<String, Object> result = operationalAnswerService.answer(intent, authorities);
-                result.put("model", properties.getModel());
+                result.put("model", ollama.model());
                 audit(username, traceId, clientIp, 200, elapsed(started), null,
                         ((List<?>) result.get("metrics")).stream().filter(Map.class::isInstance)
                                 .map(Map.class::cast).map(metric -> String.valueOf(metric.get("id")))
@@ -104,55 +82,48 @@ public class AiraService {
                             ? knowledgeService.findRelevantKnowledge(securityRetrievalQuery(sanitizedPrompt), 12,
                                     Math.max(0.35, properties.getRagMinScore() - 0.08))
                             : knowledgeService.findRelevantKnowledge(sanitizedPrompt);
-            List<String> relevantSnippets = boundKnowledgeContext(
+            List<String> relevantSnippets = AiraPromptBoundary.references(
                     prioritizeKnowledge(sanitizedPrompt, removeSensitiveKnowledge(retrievedSnippets)));
-            StringBuilder refData = new StringBuilder("DOORS REFERENCE TEXT BEGIN\n");
-            if (!relevantSnippets.isEmpty()) {
-                for (int i = 0; i < relevantSnippets.size(); i++) {
-                    refData.append("\n[Retrieved chunk ").append(i + 1).append("]\n")
-                            .append(relevantSnippets.get(i)).append('\n');
-                }
-            }
             if (intent.source() == AiraOperationalIntent.Source.MIXED) {
                 liveResult = operationalAnswerService.answer(intent, authorities);
-                refData.append("\n[LIVE SYSTEM SNAPSHOT]\n").append(liveResult.get("answer")).append('\n');
             }
-            refData.append("\nDOORS REFERENCE TEXT END\n\n");
 
             String answer;
             boolean refinedByAi = false;
             boolean automaticDocumentRefinement = intent.source() == AiraOperationalIntent.Source.DOCUMENTATION
                     && !relevantSnippets.isEmpty() && !refineWithAi;
             try {
-                String composedPrompt = generationControlPrefix() + refData + "QUESTION: " + escapePromptMarkup(sanitizedPrompt)
-                        + "\nAnswer directly and concisely from the reference text only. Lead with the items specifically requested; omit generic preamble."
-                        + responseFocus(sanitizedPrompt);
-                answer = agent.chat(composedPrompt);
-                if (isIncompleteAnswer(answer)) {
-                    log.warn("AIra returned an incomplete response; retrying once [model: {}]", properties.getModel());
-                    answer = agent.chat(generationControlPrefix() + refData + "QUESTION: " + escapePromptMarkup(sanitizedPrompt)
-                            + "\nThe previous response was incomplete. Give the complete answer directly from the reference text only.");
+                if (relevantSnippets.isEmpty()) {
+                    answer = "I could not find enough information in the accepted DOORS references to answer that question.";
+                } else {
+                    answer = ollama.chat(sanitizedPrompt, relevantSnippets, responseFocus(sanitizedPrompt));
+                    if (isIncompleteAnswer(answer)) {
+                        log.warn("AIra returned an incomplete response; retrying once [model: {}]", ollama.model());
+                        answer = ollama.chat(sanitizedPrompt, relevantSnippets, responseFocus(sanitizedPrompt)
+                                + "\nGive a complete answer directly from the supplied reference data.");
+                    }
+                    if (isIncompleteAnswer(answer)) {
+                        throw new IllegalStateException("Aira generated an incomplete or ungrounded response; please retry");
+                    }
+                    if (!relevantSnippets.isEmpty()
+                            && !answer.toLowerCase(java.util.Locale.ROOT).contains("sources:")) {
+                        answer = answer.trim() + "\n\n" + AiraExtractiveFormatter.formatSources(relevantSnippets);
+                    }
+                    refinedByAi = true;
                 }
-                if (isIncompleteAnswer(answer)) {
-                    throw new IllegalStateException("Aira generated an incomplete or ungrounded response; please retry");
-                }
-                if (!relevantSnippets.isEmpty()
-                        && !answer.toLowerCase(java.util.Locale.ROOT).contains("sources:")) {
-                    answer = answer.trim() + "\n\n" + AiraExtractiveFormatter.formatSources(relevantSnippets);
-                }
-                refinedByAi = true;
             } catch (RuntimeException modelFailure) {
                 if (!automaticDocumentRefinement) throw modelFailure;
                 log.warn("Automatic document refinement failed; returning governed extractive answer [model: {}, error: {}]",
-                        properties.getModel(), modelFailure.getMessage());
+                        ollama.model(), modelFailure.getMessage());
                 answer = buildExtractiveKnowledgeAnswer(relevantSnippets);
             }
+            if (liveResult != null) answer = liveResult.get("answer") + "\n\n" + answer;
             audit(username, traceId, clientIp, 200, elapsed(started), null);
 
             Map<String, Object> result = new java.util.HashMap<>();
             result.put("answer", answer);
             result.put("executionDisabled", true);
-            result.put("model", properties.getModel());
+            result.put("model", ollama.model());
             result.put("knowledgeSnippetsMatched", relevantSnippets.size());
             result.put("grounded", !relevantSnippets.isEmpty());
             result.put("refined", refinedByAi);
@@ -169,7 +140,7 @@ public class AiraService {
             throw ex;
         } catch (RuntimeException ex) {
             log.error("AIra chat failed [model: {}, elapsedMs: {}, error: {}]",
-                    properties.getModel(), elapsed(started), ex.getMessage(), ex);
+                    ollama.model(), elapsed(started), ex.getMessage(), ex);
             audit(username, traceId, clientIp, 503, elapsed(started), ex.getClass().getSimpleName(), null);
             throw ex;
         }
@@ -185,8 +156,8 @@ public class AiraService {
     public Map<String, Object> status() {
         Map<String, Object> statusMap = new java.util.HashMap<>();
         statusMap.put("enabled", properties.isEnabled());
-        statusMap.put("model", properties.getModel());
-        statusMap.put("embeddingModel", properties.getEmbeddingModel());
+        statusMap.put("model", ollama.model());
+        statusMap.put("embeddingModel", ollama.embeddingModel());
         statusMap.put("knowledgeBaseReady", knowledgeService.isReady());
         statusMap.put("knowledgeSegmentsCount", knowledgeService.getSegmentCount());
         statusMap.put("operationalAvailable", true);
@@ -197,22 +168,8 @@ public class AiraService {
             return statusMap;
         }
         try {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
-            HttpRequest request = HttpRequest.newBuilder(URI.create(trimSlash(properties.getBaseUrl()) + "/api/tags"))
-                    .timeout(Duration.ofSeconds(5)).GET().build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            boolean modelAvailable = false;
-            if (response.statusCode() == 200) {
-                JsonNode models = objectMapper.readTree(response.body()).path("models");
-                for (JsonNode model : models) {
-                    String name = model.path("name").asText();
-                    if (name.equals(properties.getModel()) || name.startsWith(properties.getModel() + ":")) {
-                        modelAvailable = true;
-                        break;
-                    }
-                }
-            }
-            statusMap.put("online", response.statusCode() == 200 && modelAvailable);
+            boolean modelAvailable = ollama.available();
+            statusMap.put("online", modelAvailable);
             statusMap.put("modelAvailable", modelAvailable);
             return statusMap;
         } catch (Exception ex) {
@@ -241,10 +198,6 @@ public class AiraService {
     }
 
     private static long elapsed(long started) { return (System.nanoTime() - started) / 1_000_000; }
-    private static String trimSlash(String value) { return value.endsWith("/") ? value.substring(0, value.length() - 1) : value; }
-    private String generationControlPrefix() {
-        return properties.getModel().toLowerCase(java.util.Locale.ROOT).startsWith("qwen3") ? "/no_think\n" : "";
-    }
     private static String responseFocus(String prompt) {
         String normalized = prompt.toLowerCase(Locale.ROOT);
         if (isPasswordPolicyQuestion(prompt)) {
@@ -262,9 +215,6 @@ public class AiraService {
             return "\nFor RBAC questions, enumerate Security Administrator, Data Manager, Developer, Data Viewer, External User and API User with the permitted purpose or boundary stated in the reference, then explain segregation rules.";
         }
         return "";
-    }
-    private static String escapePromptMarkup(String value) {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     static boolean isIncompleteAnswer(String answer) {

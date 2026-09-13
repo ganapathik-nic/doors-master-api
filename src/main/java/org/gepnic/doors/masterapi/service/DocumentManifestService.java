@@ -25,6 +25,8 @@ public class DocumentManifestService {
     private final ReportViewerService reportViewerService;
     private final ObjectMapper objectMapper;
     private final RegisteredDocumentServiceClient documentServiceClient;
+    private final DocumentGrantService grants;
+    private final DocumentDownloadOrchestrationService downloadPolicies;
 
     public Map<String, Object> discover(String serviceName, String queryName, String apiKey, Map<String, Object> request) {
         return discover(serviceName, queryName, apiKey, request, false);
@@ -48,6 +50,7 @@ public class DocumentManifestService {
             throw new SecurityException("Query Name does not match the Query mapped to this document service");
         }
 
+        String grantScope = grants.currentScope(caller, registration);
         ReportExecutionRequest execution = ReportExecutionRequest.builder()
                 .queryUniqueName(registration.getManifestQueryName())
                 .agentId(registration.getAgentId())
@@ -60,6 +63,7 @@ public class DocumentManifestService {
         Object normalizedQueryData = normalizeJsonValues(source.data());
         List<Map<String, Object>> documents = new ArrayList<>();
         collectDocuments(normalizedQueryData, registration, request, documents);
+        grants.issue(grantScope, documents, request);
         if (previewDocumentCalls) previewDocuments(registration, documents);
         else prepareDownloads(registration, documents,
                 source.nodeResponseCodes().get(registration.getAgentId()));
@@ -348,6 +352,8 @@ public class DocumentManifestService {
                 || !registration.getManifestClientName().equalsIgnoreCase(caller.getClientName())) {
             throw new SecurityException("API key does not belong to the ClientName mapped to this document service");
         }
+        var approvedParameters = grants.require(grants.currentScope(caller, registration), request);
+        downloadPolicies.authorizeRegisteredDocument(caller, registration, request, approvedParameters);
         return documentServiceClient.download(
                 registration,
                 required(request.get("downloadId"), "downloadId"),

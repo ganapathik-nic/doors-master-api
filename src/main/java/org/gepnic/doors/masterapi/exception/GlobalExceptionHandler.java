@@ -40,9 +40,9 @@ public class GlobalExceptionHandler {
                 exception.getExtensions());
     }
 
-    @ExceptionHandler(SecurityException.class)
+    @ExceptionHandler({SecurityException.class, org.springframework.security.access.AccessDeniedException.class})
     public ResponseEntity<ProblemDetail> handleSecurity(
-            SecurityException exception,
+            RuntimeException exception,
             HttpServletRequest request) {
         return problem(
                 request,
@@ -68,6 +68,14 @@ public class GlobalExceptionHandler {
                 "The secure request could not be processed. Contact NIC DOORS support with the trace ID.",
                 false,
                 Map.of());
+    }
+
+    @ExceptionHandler({org.springframework.web.bind.MethodArgumentNotValidException.class,
+            jakarta.validation.ConstraintViolationException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class})
+    public ResponseEntity<ProblemDetail> handleValidation(Exception exception, HttpServletRequest request) {
+        return problem(request, HttpStatus.BAD_REQUEST, "DOORS-REQUEST-INVALID", "invalid-request",
+                "Invalid request", "Request fields are missing or invalid", false, Map.of());
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

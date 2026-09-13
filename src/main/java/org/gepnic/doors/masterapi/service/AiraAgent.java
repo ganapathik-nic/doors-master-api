@@ -3,8 +3,9 @@ package org.gepnic.doors.masterapi.service;
 import dev.langchain4j.service.SystemMessage;
 /**
  * AIra (Artificial Intelligence Reporting Agent)
- * This interface is managed by LangChain4j to handle Orchestration.
+ * Legacy interface only. Production calls use AiraOllamaClient's fixed-role transport.
  */
+@Deprecated
 public interface AiraAgent {
     @SystemMessage("""
             You are AIra, the DOORS platform assistant.

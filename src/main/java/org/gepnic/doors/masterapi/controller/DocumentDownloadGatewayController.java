@@ -34,6 +34,7 @@ public class DocumentDownloadGatewayController {
     private final org.gepnic.doors.masterapi.service.SwaggerSessionService swaggerSessionService;
     private final ApiClientRepository apiClientRepository;
     private final DocumentDownloadAuditService documentAuditService;
+    private final RegisteredDocumentServiceClient documentServiceClient;
 
     @PostMapping("/services/{serviceName}/queries/{queryName}")
     public ResponseEntity<?> executeMappedQuery(
@@ -149,6 +150,7 @@ public class DocumentDownloadGatewayController {
             @RequestBody Map<String, Object> request) {
         Instant startedAt = Instant.now();
         String correlationId = correlationId(requestedCorrelationId);
+        servletRequest.setAttribute("X-DOORS-CORRELATION", correlationId);
         String traceId = ensureTraceId(servletRequest);
         String clientIp = resolveClientIp(servletRequest);
         var client = apiClientRepository.findByApiKey(apiKey)
@@ -157,6 +159,7 @@ public class DocumentDownloadGatewayController {
         var registration = documentServiceRepository.findByServiceNameIgnoreCase(serviceName)
                 .filter(value -> Boolean.TRUE.equals(value.getIsActive()))
                 .orElseThrow(() -> new java.util.NoSuchElementException("Active document service not found: " + serviceName));
+        String upstreamEndpoint = upstreamEndpoint(registration, request);
         RegisteredDocumentServiceClient.DocumentPayload document;
         try {
             document = manifestService.downloadDocument(serviceName, apiKey, request);
@@ -164,9 +167,9 @@ public class DocumentDownloadGatewayController {
             documentAuditService.record(correlationId, client.getClientName(), serviceName,
                     registration.getManifestQueryName(), registration.getAgentId(),
                     registration.getDocumentDownloadPolicyCode(), clientIp, request, startedAt,
-                    "FAILED", 502, null, null, integer(request.get("queryResponseCode")), null,
+                    "FAILED", 502, null, null, integer(request.get("queryResponseCode")), upstreamStatus(error),
                     "DOCUMENT_FETCH_FAILED", error.getMessage(), traceId, null,
-                    servletRequest.getRequestURL().toString(), null);
+                    servletRequest.getRequestURL().toString(), upstreamEndpoint);
             throw error;
         }
         String fileName = String.valueOf(request.get("fileName"));
@@ -216,6 +219,41 @@ public class DocumentDownloadGatewayController {
         if (value == null) return null;
         try { return Integer.valueOf(String.valueOf(value)); }
         catch (NumberFormatException ignored) { return null; }
+    }
+
+    private String upstreamEndpoint(
+            org.gepnic.doors.masterapi.model.DocumentServiceRegistration registration,
+            Map<String, Object> request) {
+        try {
+            return documentServiceClient.buildDownloadUri(
+                    registration,
+                    requiredText(request.get("downloadId")),
+                    requiredText(request.get("docCode")),
+                    requiredText(request.get("fileName")),
+                    optionalText(request.get("packetType"))).toASCIIString();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static Integer upstreamStatus(RuntimeException error) {
+        if (error.getMessage() == null) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?:HTTP|status)[ =:]+(\\d{3})", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(error.getMessage());
+        if (!matcher.find()) return null;
+        try { return Integer.valueOf(matcher.group(1)); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private static String requiredText(Object value) {
+        String text = optionalText(value);
+        if (text.isBlank()) throw new IllegalArgumentException("Required document parameter is missing");
+        return text;
+    }
+
+    private static String optionalText(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private static String ensureTraceId(HttpServletRequest request) {

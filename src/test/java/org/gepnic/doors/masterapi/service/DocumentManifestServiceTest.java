@@ -81,6 +81,43 @@ class DocumentManifestServiceTest {
     }
 
     @Test
+    void discoveryHandlesFinancialBidAndTenderSummaryDocumentsFromAocPayload() {
+        when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
+        when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
+                .thenReturn(Optional.of(registration));
+        when(reportViewerService.executeDocumentReport(any())).thenReturn(completeAocManifestResult());
+        when(documentServiceClient.buildDownloadUri(
+                any(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(URI.create("https://example.test/Documents/downloadDocuments"));
+
+        Map<String, Object> result = service.discover(
+                "AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key", Map.of());
+
+        assertThat(result.get("documentCount")).isEqualTo(5);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> documents = (List<Map<String, Object>>) result.get("documents");
+        assertThat(documents).extracting(value -> value.get("serviceDocCode"))
+                .containsExactly("BOQCHART", "BIDPCK", "TECHEVALSUM", "FINEVALSUM", "AOC");
+        assertThat(documents.getFirst()).containsEntry("outputFilePrefix", "2026_NIC_13149_1")
+                .containsEntry("fileName", "boqcomparativechart.xlsx")
+                .containsEntry("downloadId", "33975");
+        Map<String, Object> technicalSummary = documents.stream()
+                .filter(value -> "TECHEVALSUM".equals(value.get("serviceDocCode"))).findFirst().orElseThrow();
+        assertThat(technicalSummary).containsEntry("downloadId", "33975")
+                .containsEntry("fileName", "techsummary_33975.pdf")
+                .containsEntry("packetType", "Technical")
+                .containsEntry("sourceDocumentCode", "TECHEVALSUM33975");
+        Map<String, Object> financialSummary = documents.stream()
+                .filter(value -> "FINEVALSUM".equals(value.get("serviceDocCode"))).findFirst().orElseThrow();
+        assertThat(financialSummary).containsEntry("packetType", "Finance");
+        Map<String, Object> aoc = documents.stream()
+                .filter(value -> "AOC".equals(value.get("serviceDocCode"))).findFirst().orElseThrow();
+        assertThat(aoc).containsEntry("fileName", "letterofaward.pdf")
+                .containsEntry("packetType", "AOC");
+        assertThat(documents).noneMatch(value -> value.get("fileName") == null);
+    }
+
+    @Test
     void finalDownloadRejectsApiKeyBelongingToDifferentClient() {
         when(clientRepository.findByApiKey("other-key")).thenReturn(Optional.of(client("other-client")));
         when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
@@ -121,5 +158,32 @@ class DocumentManifestServiceTest {
                 Map.of(),
                 Map.of("agent-1", 200),
                 ReportPagination.disabled(1));
+    }
+
+
+    private ReportResult completeAocManifestResult() {
+        Map<String, Object> financial = Map.of(
+                "t_CHART_DETAILS", Map.of("t_CHART", Map.of(
+                        "t_CHART_TYPE", "BOQCHART", "t_CHART_NAME", "boqcomparativechart.xlsx")),
+                "t_BID_DOCS", List.of(Map.of(
+                        "t_BID_ID", 70080,
+                        "t_DOC_DATA", List.of(Map.of(
+                                "t_DOC_TYPE", "BOQ", "t_DOC_CODE", "BOQ70080",
+                                "t_DOC_NAME", "BOQ_33975")))));
+        Map<String, Object> summary = Map.of(
+                "t_SUMMARY_DOCS", List.of(Map.of(
+                        "t_SUMMARY_ID", 33975,
+                        "t_DOC_DATA", List.of(
+                                Map.of("t_DOC_TYPE", "BOS", "t_DOC_CODE", "TECHBOS33975", "t_DOC_NAME", ""),
+                                Map.of("t_DOC_TYPE", "EVALSUM", "t_DOC_CODE", "TECHEVALSUM33975", "t_DOC_NAME", "techsummary_33975.pdf"),
+                                Map.of("t_DOC_TYPE", "BOS", "t_DOC_CODE", "FINBOS33975", "t_DOC_NAME", ""),
+                                Map.of("t_DOC_TYPE", "EVALSUM", "t_DOC_CODE", "FINEVALSUM33975", "t_DOC_NAME", "finsummary_33975.pdf"),
+                                Map.of("t_DOC_TYPE", "AOC", "t_DOC_CODE", "AOC33975", "t_DOC_NAME", "letterofaward.pdf")))));
+        return new ReportResult(
+                List.of(Map.of(
+                        "PUBLISHED_DETAILS", Map.of("t_ID", "2026_NIC_13149_1"),
+                        "FINANCIAL_BID_DOC_DETAILS", financial,
+                        "TENDER_SUMMARY_DOC_DETAILS", summary)),
+                List.of(), Map.of(), Map.of("agent-1", 200), ReportPagination.disabled(1));
     }
 }

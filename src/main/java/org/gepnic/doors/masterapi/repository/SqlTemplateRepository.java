@@ -15,6 +15,7 @@ public interface SqlTemplateRepository extends JpaRepository<SqlTemplate, Long> 
     // 1. Sidebar Badges
     long countByCategory(String category);
     long countByStatus(String status);
+    long countByIsActive(Boolean isActive);
 
     // 2. Main Library View
     List<SqlTemplate> findByStatusAndIsActive(String status, Boolean isActive);

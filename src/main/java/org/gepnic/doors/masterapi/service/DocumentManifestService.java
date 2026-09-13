@@ -91,27 +91,47 @@ public class DocumentManifestService {
 
     private void collectDocuments(Object node, DocumentServiceRegistration registration,
                                   Map<String, Object> request, List<Map<String, Object>> documents) {
+        collectDocuments(node, registration, request, documents, null);
+    }
+
+    private void collectDocuments(Object node, DocumentServiceRegistration registration,
+                                  Map<String, Object> request, List<Map<String, Object>> documents,
+                                  String tenderId) {
         if (node instanceof Map<?, ?> map) {
+            String currentTenderId = tenderId;
+            Object published = value(map, "PUBLISHED_DETAILS");
+            if (published instanceof Map<?, ?> publishedDetails) {
+                currentTenderId = firstNonBlank(text(value(publishedDetails, "t_ID")), tenderId);
+            }
             Object financial = value(map, "FINANCIAL_BID_DOC_DETAILS");
+            Object summary = value(map, "TENDER_SUMMARY_DOC_DETAILS");
             if (financial instanceof Map<?, ?> details) {
-                normalizeFinancial(details, registration, request, documents);
+                normalizeFinancial(details, registration, request, documents, currentTenderId);
             } else if (value(map, "t_CHART_DETAILS") != null || value(map, "t_BID_DOCS") != null) {
                 // ReportViewerService flattens one level of nested result maps.
                 // Accept that internal representation as well as the original AOC JSON.
-                normalizeFinancial(map, registration, request, documents);
+                normalizeFinancial(map, registration, request, documents, currentTenderId);
+            }
+            if (summary instanceof Map<?, ?> details) {
+                normalizeTenderSummary(details, registration, request, documents);
+            } else if (value(map, "t_SUMMARY_DOCS") != null) {
+                // Also accept the one-level-flattened representation returned by ReportViewerService.
+                normalizeTenderSummary(map, registration, request, documents);
             }
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 if (financial instanceof Map<?, ?>
                         && "FINANCIAL_BID_DOC_DETAILS".equalsIgnoreCase(String.valueOf(entry.getKey()))) continue;
-                collectDocuments(entry.getValue(), registration, request, documents);
+                if (summary instanceof Map<?, ?>
+                        && "TENDER_SUMMARY_DOC_DETAILS".equalsIgnoreCase(String.valueOf(entry.getKey()))) continue;
+                collectDocuments(entry.getValue(), registration, request, documents, currentTenderId);
             }
         } else if (node instanceof Collection<?> collection) {
-            for (Object child : collection) collectDocuments(child, registration, request, documents);
+            for (Object child : collection) collectDocuments(child, registration, request, documents, tenderId);
         } else if (node instanceof CharSequence text) {
             String json = text.toString().trim();
             if (json.startsWith("{") || json.startsWith("[")) {
                 try {
-                    collectDocuments(objectMapper.readValue(json, Object.class), registration, request, documents);
+                    collectDocuments(objectMapper.readValue(json, Object.class), registration, request, documents, tenderId);
                 } catch (Exception ignored) {
                     // Ordinary text values are not document manifests.
                 }
@@ -146,7 +166,8 @@ public class DocumentManifestService {
     }
 
     private void normalizeFinancial(Map<?, ?> details, DocumentServiceRegistration registration,
-                                    Map<String, Object> request, List<Map<String, Object>> documents) {
+                                    Map<String, Object> request, List<Map<String, Object>> documents,
+                                    String tenderId) {
         Object bidDocs = value(details, "t_BID_DOCS");
         String derivedWorkItemRefNo = firstDocumentWorkItemRefNo(bidDocs);
         Object chartDetails = value(details, "t_CHART_DETAILS");
@@ -157,7 +178,7 @@ public class DocumentManifestService {
                 String workItemRefNo = firstNonBlank(text(request.get("workItemRefNo")),
                         firstNonBlank(trailingNumber(fileName), derivedWorkItemRefNo));
                 add(documents, registration, "BOQCHART", "BOQCHART", workItemRefNo, fileName,
-                        text(request.get("bidId")), workItemRefNo, null, request);
+                        text(request.get("bidId")), workItemRefNo, null, "Finance", tenderId);
             }
         }
         if (bidDocs instanceof Collection<?> bids) {
@@ -173,10 +194,51 @@ public class DocumentManifestService {
                     add(documents, registration, text(value(fileMap, "t_DOC_TYPE")), "BIDPCK", bidId,
                             fileName, bidId,
                             firstNonBlank(text(request.get("workItemRefNo")), trailingNumber(fileName)),
-                            text(value(fileMap, "t_DOC_CODE")), request);
+                            text(value(fileMap, "t_DOC_CODE")), "Finance", null);
                 }
             }
         }
+    }
+
+    private void normalizeTenderSummary(Map<?, ?> details, DocumentServiceRegistration registration,
+                                        Map<String, Object> request, List<Map<String, Object>> documents) {
+        Object summaryDocs = value(details, "t_SUMMARY_DOCS");
+        if (!(summaryDocs instanceof Collection<?> summaries)) return;
+        for (Object summary : summaries) {
+            if (!(summary instanceof Map<?, ?> summaryMap)) continue;
+            String summaryId = text(value(summaryMap, "t_SUMMARY_ID"));
+            Object docData = value(summaryMap, "t_DOC_DATA");
+            if (!(docData instanceof Collection<?> files)) continue;
+            for (Object file : files) {
+                if (!(file instanceof Map<?, ?> fileMap)) continue;
+                String fileName = text(value(fileMap, "t_DOC_NAME"));
+                // A blank name describes a summary document that has not been uploaded yet.
+                if (fileName == null) continue;
+                String sourceCode = text(value(fileMap, "t_DOC_CODE"));
+                String serviceDocCode = summaryServiceDocCode(sourceCode, summaryId,
+                        text(value(fileMap, "t_DOC_TYPE")));
+                add(documents, registration, serviceDocCode, serviceDocCode, summaryId, fileName,
+                        null, firstNonBlank(text(request.get("workItemRefNo")), summaryId),
+                        sourceCode, summaryPacketType(serviceDocCode), null);
+            }
+        }
+    }
+
+    private String summaryServiceDocCode(String sourceCode, String summaryId, String documentType) {
+        if (sourceCode != null && summaryId != null
+                && sourceCode.toUpperCase(Locale.ROOT).endsWith(summaryId.toUpperCase(Locale.ROOT))) {
+            String prefix = sourceCode.substring(0, sourceCode.length() - summaryId.length());
+            if (!prefix.isBlank()) return prefix;
+        }
+        return firstNonBlank(sourceCode, documentType);
+    }
+
+    private String summaryPacketType(String serviceDocCode) {
+        if (serviceDocCode == null) return "";
+        String normalized = serviceDocCode.toUpperCase(Locale.ROOT);
+        if (normalized.startsWith("TECH")) return "Technical";
+        if (normalized.startsWith("FIN")) return "Finance";
+        return normalized.equals("AOC") ? "AOC" : serviceDocCode;
     }
 
     private String firstDocumentWorkItemRefNo(Object bidDocs) {
@@ -197,18 +259,19 @@ public class DocumentManifestService {
     private void add(List<Map<String, Object>> documents, DocumentServiceRegistration registration,
                      String documentType, String serviceDocCode, String downloadId, String fileName,
                      String bidId, String workItemRefNo, String sourceDocumentCode,
-                     Map<String, Object> request) {
-        if (downloadId == null || fileName == null) return;
+                     String packetType, String outputFilePrefix) {
+        if (downloadId == null || fileName == null || serviceDocCode == null) return;
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("docsServiceName", registration.getServiceName());
         item.put("documentType", documentType);
         item.put("serviceDocCode", serviceDocCode);
-        item.put("packetType", "Finance");
+        item.put("packetType", packetType == null ? "" : packetType);
         item.put("downloadId", downloadId);
         item.put("fileName", fileName);
         item.put("bidId", bidId);
         item.put("workItemRefNo", workItemRefNo);
         item.put("sourceDocumentCode", sourceDocumentCode);
+        if (outputFilePrefix != null) item.put("outputFilePrefix", outputFilePrefix);
         documents.add(item);
     }
 

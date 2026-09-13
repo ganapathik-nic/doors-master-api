@@ -48,6 +48,17 @@ spring:
 
 # Portal Registry Configuration
 doors:
+  aira:
+    # Opt-in for staging/production. Aira never calls a hosted model.
+    enabled: ${DOORS_AIRA_ENABLED:true}
+    base-url: ${DOORS_AIRA_BASE_URL:http://127.0.0.1:11434}
+    model: ${DOORS_AIRA_MODEL:qwen2.5:1.5b}
+    timeout-seconds: ${DOORS_AIRA_TIMEOUT_SECONDS:180}
+    max-prompt-chars: ${DOORS_AIRA_MAX_PROMPT_CHARS:4000}
+    embedding-model: ${DOORS_AIRA_EMBEDDING_MODEL:nomic-embed-text}
+    vector-store-path: ${DOORS_AIRA_VECTOR_STORE_PATH:security/knowledge/doors-vector-store.json}
+    rag-max-results: ${DOORS_AIRA_RAG_MAX_RESULTS:4}
+    rag-min-score: ${DOORS_AIRA_RAG_MIN_SCORE:0.55}
   documents:
     curl-executable: ${DOORS_CURL_EXECUTABLE:curl}
     # nicgep_docs_webservice expects SHA-512(downloadId|docCode|fileName|packetType|secret)#clientId.

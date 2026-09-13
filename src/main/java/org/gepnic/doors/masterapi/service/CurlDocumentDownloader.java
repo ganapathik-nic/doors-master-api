@@ -1,9 +1,13 @@
 package org.gepnic.doors.masterapi.service;
 
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.model.DocumentServiceRegistration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.io.IOException;
 import java.net.URI;
@@ -17,6 +21,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Component
+@Slf4j
 public class CurlDocumentDownloader implements DocumentDownloader {
 
     private static final String WRITE_OUT = "%{http_code}\\n%{content_type}";
@@ -62,6 +67,15 @@ public class CurlDocumentDownloader implements DocumentDownloader {
             }
             command.add(uri.toASCIIString());
 
+            String traceId = currentRequestValue("X-DOORS-TRACE", false);
+            String correlationId = currentRequestValue("X-DOORS-CORRELATION", false);
+            log.info("[{}] NICGEP-DOCS-REQUEST correlationId={} service={} agent={} method=GET uri={} "
+                            + "connectTimeoutSeconds={} maxTimeSeconds={} verifyTls={} authorizationClientId={}",
+                    traceId, correlationId, registration.getServiceName(), registration.getAgentId(),
+                    uri.toASCIIString(), connectTimeoutSeconds, readTimeoutSeconds,
+                    registration.getVerifyTls(), authorizationClientId);
+
+            long startedAt = System.nanoTime();
             Process process = new ProcessBuilder(command)
                     .redirectOutput(metadataFile.toFile())
                     .redirectError(errorFile.toFile())
@@ -69,19 +83,32 @@ public class CurlDocumentDownloader implements DocumentDownloader {
             boolean finished = process.waitFor(readTimeoutSeconds + 5L, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
+                log.error("[{}] NICGEP-DOCS-TIMEOUT correlationId={} service={} uri={} maxTimeSeconds={}",
+                        traceId, correlationId, registration.getServiceName(), uri.toASCIIString(),
+                        readTimeoutSeconds);
                 throw new IllegalStateException("curl document download timed out");
             }
 
             String metadata = Files.readString(metadataFile, StandardCharsets.UTF_8).trim();
             String error = Files.readString(errorFile, StandardCharsets.UTF_8).trim();
+            int status = httpStatus(metadata);
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
             if (process.exitValue() != 0) {
+                log.error("[{}] NICGEP-DOCS-FAILED correlationId={} service={} agent={} uri={} "
+                                + "curlExitCode={} upstreamHttpStatus={} durationMs={} stderr={} responseBody={}",
+                        traceId, correlationId, registration.getServiceName(), registration.getAgentId(),
+                        uri.toASCIIString(), process.exitValue(), status, durationMs,
+                        safeError(error), safeBody(bodyFile));
                 throw new IllegalStateException("curl document download failed (exit "
-                        + process.exitValue() + "): " + safeError(error));
+                        + process.exitValue() + ", HTTP " + status + "): " + safeError(error));
             }
 
             String[] values = metadata.split("\\R", 2);
-            int status = values.length == 0 || values[0].isBlank() ? 0 : Integer.parseInt(values[0].trim());
             if (status < 200 || status >= 300) {
+                log.error("[{}] NICGEP-DOCS-FAILED correlationId={} service={} agent={} uri={} "
+                                + "upstreamHttpStatus={} durationMs={} responseBody={}",
+                        traceId, correlationId, registration.getServiceName(), registration.getAgentId(),
+                        uri.toASCIIString(), status, durationMs, safeBody(bodyFile));
                 throw new IllegalStateException("Document service returned HTTP " + status);
             }
             MediaType contentType = values.length < 2 || values[1].isBlank()
@@ -89,6 +116,10 @@ public class CurlDocumentDownloader implements DocumentDownloader {
                     : MediaType.parseMediaType(values[1].trim());
             long contentLength = Files.size(bodyFile);
             String sha256 = digest(bodyFile);
+            log.info("[{}] NICGEP-DOCS-SUCCESS correlationId={} service={} agent={} uri={} "
+                            + "upstreamHttpStatus={} contentType={} contentLength={} durationMs={}",
+                    traceId, correlationId, registration.getServiceName(), registration.getAgentId(),
+                    uri.toASCIIString(), status, contentType, contentLength, durationMs);
             Path completedBody = bodyFile;
             bodyFile = null; // ownership is transferred to DownloadResponse
             return new DownloadResponse(completedBody, contentLength, sha256, contentType, status);
@@ -146,6 +177,34 @@ public class CurlDocumentDownloader implements DocumentDownloader {
     private static String safeError(String error) {
         if (error == null || error.isBlank()) return "no error details returned";
         return error.length() <= 1000 ? error : error.substring(0, 1000);
+    }
+
+    private static String safeBody(Path bodyFile) {
+        if (bodyFile == null) return "not captured";
+        try {
+            if (!Files.isRegularFile(bodyFile) || Files.size(bodyFile) == 0) return "empty";
+            String body = Files.readString(bodyFile, StandardCharsets.UTF_8)
+                    .replaceAll("[\\r\\n\\t]+", " ").trim();
+            return body.length() <= 2000 ? body : body.substring(0, 2000) + "...[truncated]";
+        } catch (Exception error) {
+            return "unreadable: " + error.getClass().getSimpleName();
+        }
+    }
+
+    private static int httpStatus(String metadata) {
+        if (metadata == null || metadata.isBlank()) return 0;
+        String firstLine = metadata.split("\\R", 2)[0].trim();
+        try { return Integer.parseInt(firstLine); }
+        catch (NumberFormatException ignored) { return 0; }
+    }
+
+    private static String currentRequestValue(String name, boolean header) {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes)) {
+            return "N/A";
+        }
+        HttpServletRequest request = attributes.getRequest();
+        Object value = header ? request.getHeader(name) : request.getAttribute(name);
+        return value == null || value.toString().isBlank() ? "N/A" : value.toString();
     }
 
     private static void deleteQuietly(Path path) {

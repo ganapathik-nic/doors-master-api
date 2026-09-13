@@ -17,19 +17,23 @@ class SecureDocumentationServiceTest {
     @Test
     void dataManagerReceivesCompleteCatalogue() {
         var documents = service.visibleCatalogue(auth("DATAMANAGER"));
-        assertEquals(21, documents.size());
+        assertEquals(23, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("hosting-deployment-operations")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-process-flow-flyer")));
         assertTrue(service.resolve("doors-process-flow-flyer", auth("DATAMANAGER")).resource().exists());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("end-to-end-encryption-process") && value.version().equals("2.0")));
+        assertTrue(documents.stream().anyMatch(value -> value.id().equals("aira-architecture-operations") && value.version().equals("1.2")));
+        assertTrue(service.resolve("aira-architecture-operations", auth("DATAMANAGER")).resource().exists());
+        assertTrue(service.resolve("password-policy-mfa", auth("DATAMANAGER")).resource().exists());
     }
 
     @Test
     void externalUserReceivesOnlySharedAndRoleManuals() {
         var documents = service.visibleCatalogue(auth("ROLE_EXTERNAL"));
-        assertEquals(6, documents.size());
+        assertEquals(7, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("external-user-manual")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-rbac-security-flyer")));
+        assertTrue(documents.stream().anyMatch(value -> value.id().equals("password-policy-mfa")));
     }
 
     @Test

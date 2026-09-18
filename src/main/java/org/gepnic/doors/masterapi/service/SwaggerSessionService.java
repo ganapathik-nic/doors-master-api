@@ -24,6 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 @RequiredArgsConstructor
 public class SwaggerSessionService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private GatewayProtocolService protocolService;
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
@@ -70,10 +72,18 @@ public class SwaggerSessionService {
         }
         if (documentTarget) validateDocumentTarget(client, template, requestBody, swaggerTarget);
         else validateAgents(client, requestBody);
+        int protocolVersion=1;
+        if(!documentTarget) {
+            Object selected=requestBody==null?null:requestBody.get("protocolVersion");
+            protocolVersion=selected==null?1:selected instanceof Integer n?n:-1;
+            protocolService.requireAllowed(clientId,uniqueName,protocolVersion);
+        }
 
         Instant expiresAt = Instant.now().plusSeconds(launchTtlSeconds);
         Map<String, Object> configuration = new LinkedHashMap<>();
         configuration.put("apiKey", client.getApiKey());
+        configuration.put("clientId",clientId);
+        configuration.put("protocolVersion",protocolVersion);
         configuration.put("uniqueName", template.getUniqueName());
         configuration.put("body", requestBody == null ? Map.of() : requestBody);
         configuration.put("keyFingerprint", keyFingerprint == null ? "" : keyFingerprint.trim());

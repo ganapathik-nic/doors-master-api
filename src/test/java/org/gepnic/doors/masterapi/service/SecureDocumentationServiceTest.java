@@ -17,7 +17,7 @@ class SecureDocumentationServiceTest {
     @Test
     void dataManagerReceivesCompleteCatalogue() {
         var documents = service.visibleCatalogue(auth("DATAMANAGER"));
-        assertEquals(23, documents.size());
+        assertEquals(24, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("hosting-deployment-operations")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-process-flow-flyer")));
         assertTrue(service.resolve("doors-process-flow-flyer", auth("DATAMANAGER")).resource().exists());
@@ -25,6 +25,7 @@ class SecureDocumentationServiceTest {
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("aira-architecture-operations") && value.version().equals("1.2")));
         assertTrue(service.resolve("aira-architecture-operations", auth("DATAMANAGER")).resource().exists());
         assertTrue(service.resolve("password-policy-mfa", auth("DATAMANAGER")).resource().exists());
+        assertTrue(service.resolve("api-data-sharing-visual-manual", auth("DATAMANAGER")).resource().exists());
     }
 
     @Test
@@ -40,12 +41,30 @@ class SecureDocumentationServiceTest {
     void unauthorizedDocumentIsConcealedAsNotFound() {
         assertThrows(ResponseStatusException.class,
                 () -> service.resolve("security-architecture-controls", auth("DEVELOPER")));
+        for (String role : List.of("EXTERNAL", "APIUSER", "DEVELOPER", "DATAVIEWER", "SECURITYADMIN")) {
+            assertThrows(ResponseStatusException.class,
+                    () -> service.resolve("api-data-sharing-visual-manual", auth(role)));
+        }
     }
 
     @Test
     void traversalStyleIdentifiersAreRejected() {
         assertThrows(ResponseStatusException.class,
                 () -> service.resolve("../application.yml", auth("DATAMANAGER")));
+    }
+
+    @Test
+    void walkthroughsUseManualPermissionsAndFixedResources() throws Exception {
+        assertEquals(1, service.visibleWalkthroughs(auth("DATAMANAGER")).size());
+        var resource = service.resolveWalkthrough("api-data-sharing", auth("DATAMANAGER"));
+        var tree = new com.fasterxml.jackson.databind.ObjectMapper().readTree(resource.getInputStream());
+        assertEquals(35, tree.get("steps").size());
+        for (String role : List.of("EXTERNAL", "APIUSER", "DEVELOPER", "DATAVIEWER", "SECURITYADMIN")) {
+            assertTrue(service.visibleWalkthroughs(auth(role)).isEmpty());
+            assertThrows(ResponseStatusException.class, () -> service.resolveWalkthrough("api-data-sharing", auth(role)));
+        }
+        assertThrows(ResponseStatusException.class, () -> service.resolveWalkthrough("../application", auth("DATAMANAGER")));
+        assertThrows(ResponseStatusException.class, () -> service.resolveWalkthrough("api-data-sharing", null));
     }
 
     private UsernamePasswordAuthenticationToken auth(String authority) {

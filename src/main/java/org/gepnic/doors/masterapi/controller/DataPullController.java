@@ -59,6 +59,11 @@ public class DataPullController {
         ));
     }
 
+    @GetMapping("/my-requests/{id}")
+    public ResponseEntity<?> getMyRequest(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(service.getMyRequest(id), "Request retrieved"));
+    }
+
     @GetMapping("/list")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listByStatus(@RequestParam String status) {
         // The service now handles the mapping logic internally

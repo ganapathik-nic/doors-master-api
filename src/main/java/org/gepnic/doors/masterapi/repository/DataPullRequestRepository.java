@@ -8,10 +8,12 @@ import org.springframework.stereotype.Repository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
+import java.util.Optional;
 
 
 @Repository
 public interface DataPullRequestRepository extends JpaRepository<ExternalRequest, Long> {
+    Optional<ExternalRequest> findByIdAndRequestedBy(Long id, String requestedBy);
 
     /**
      * Fetches all requests submitted by a specific user for their history view.

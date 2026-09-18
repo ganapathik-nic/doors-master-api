@@ -23,6 +23,16 @@ import java.util.*;
 @RequestMapping("/api/v1/external/api-user")
 @RequiredArgsConstructor
 public class ApiUserSelfServiceController {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.gepnic.doors.masterapi.service.GatewayProtocolService protocolService;
+
+    @GetMapping("/clients/{clientId}/protocol-policies")
+    public ResponseEntity<?> protocolPolicies(@PathVariable Long clientId, Authentication authentication) {
+        User user=apiUser(authentication);
+        if(user==null || user.getApiClients().stream().noneMatch(c -> clientId.equals(c.getClientId()) && Boolean.TRUE.equals(c.getIsActive())))
+            return forbidden("Client is not assigned to this account");
+        return ResponseEntity.ok(ApiResponse.success(protocolService.policies(clientId),"Protocol policies"));
+    }
     private final UserRepository userRepository;
     private final ClientQueryMapRepository mappingRepository;
     private final SqlTemplateRepository templateRepository;

@@ -59,16 +59,18 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         CsrfTokenRequestAttributeHandler csrfRequestHandler =
                 new CsrfTokenRequestAttributeHandler();
+        CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        // Deliberately readable by Axios; this is not the authentication cookie.
+        csrfRepository.setCookieCustomizer(cookie -> cookie.secure(true).sameSite("Strict").path("/"));
 
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf
-                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRepository(csrfRepository)
                 .csrfTokenRequestHandler(csrfRequestHandler)
                 .ignoringRequestMatchers(
                     "/api/v1/auth/login",
                     "/api/v1/auth/register",
-                    "/api/v1/auth/logout",
                     "/api/v1/auth/mfa/verify",
                     "/api/v1/external/execute/**",
                     "/api/v1/master/gateway/handshake",
@@ -181,6 +183,7 @@ public class SecurityConfig {
                     "/swagger-ui.html",
                     "/swagger/doors-swagger.html",
                     "/doors-swagger.html",
+                    "/doors-swagger.css",
                     "/swagger-autofill.js",
                     "/doors-swagger-bootstrap.js",
                     "/doors-swagger-forge.js",
@@ -228,7 +231,8 @@ public class SecurityConfig {
                         "External", "EXTERNAL", "ROLE_EXTERNAL",
                         "ApiUser", "APIUSER", "ROLE_APIUSER"
                     )
-                .requestMatchers(HttpMethod.GET, "/api/v1/external/data-pull/my-list")
+                .requestMatchers(HttpMethod.GET, "/api/v1/external/data-pull/my-list",
+                    "/api/v1/external/data-pull/my-requests/{id}")
                     .hasAnyAuthority(
                         "External", "EXTERNAL", "ROLE_EXTERNAL",
                         "ApiUser", "APIUSER", "ROLE_APIUSER"
@@ -237,9 +241,14 @@ public class SecurityConfig {
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
                 .requestMatchers("/api/v1/external/execute/**").hasAuthority("ROLE_API_CLIENT")
-                .requestMatchers(HttpMethod.GET, "/api/v1/external/api-user/clients")
+                .requestMatchers(HttpMethod.GET, "/api/v1/external/api-user/clients",
+                        "/api/v1/external/api-user/clients/*/protocol-policies")
                     .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
                 .requestMatchers(HttpMethod.POST, "/api/v1/external/api-user/swagger-sessions")
+                    .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
+                .requestMatchers(HttpMethod.GET, "/api/v1/external/api-user/subscription")
+                    .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
+                .requestMatchers(HttpMethod.POST, "/api/v1/external/api-user/subscription/notices/*/read")
                     .hasAnyAuthority("ApiUser", "APIUSER", "ROLE_APIUSER")
                 .requestMatchers("/api/v1/external/**").denyAll()
 
@@ -307,6 +316,7 @@ public class SecurityConfig {
                         "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                     )
                 .requestMatchers("/api/v1/reports/**").hasAnyAuthority(
+                    "ApiUser", "APIUSER", "ROLE_APIUSER",
                     "External", "EXTERNAL", "ROLE_EXTERNAL",
                     "DataViewer", "DATAVIEWER", "ROLE_DATAVIEWER",
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"

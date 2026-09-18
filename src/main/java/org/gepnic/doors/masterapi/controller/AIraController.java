@@ -1,6 +1,7 @@
 package org.gepnic.doors.masterapi.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.dto.ApiResponse;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
@@ -26,10 +28,13 @@ public class AIraController {
     @PostMapping("/chat")
     public ResponseEntity<ApiResponse<Map<String, Object>>> chat(@RequestBody Map<String, String> payload,
                                                                  Authentication authentication,
-                                                                 HttpServletRequest request) {
+                                                                 HttpServletRequest request,
+                                                                 HttpServletResponse response) {
+        String traceId = newTraceId();
+        response.setHeader("X-Trace-ID", traceId);
         try {
             Map<String, Object> result = airaService.chat(authentication.getName(), authorities(authentication),
-                    payload.get("prompt"), request.getHeader("X-Trace-ID"), clientIp(request), false);
+                    payload.get("prompt"), traceId, clientIp(request), false);
             result.putAll(historyService.record(authentication.getName(), conversationId(payload.get("conversationId")),
                     payload.get("prompt"), result));
             return ResponseEntity.ok(ApiResponse.success(result, "Aira response generated"));
@@ -40,7 +45,7 @@ public class AIraController {
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponse.error(ex.getMessage(), 503));
         } catch (RuntimeException ex) {
-            log.error("Aira request failed for user {}: {}", authentication.getName(), ex.getMessage(), ex);
+            log.error("Aira request failed [traceId={}, user={}]: {}", traceId, authentication.getName(), ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(ApiResponse.error("Aira could not complete the response within the local model time limit. Please retry.", 503));
         }
@@ -49,10 +54,13 @@ public class AIraController {
     @PostMapping("/chat/refine")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refine(@RequestBody Map<String, String> payload,
                                                                    Authentication authentication,
-                                                                   HttpServletRequest request) {
+                                                                   HttpServletRequest request,
+                                                                   HttpServletResponse response) {
+        String traceId = newTraceId();
+        response.setHeader("X-Trace-ID", traceId);
         try {
             Map<String, Object> result = airaService.chat(authentication.getName(), authorities(authentication),
-                    payload.get("prompt"), request.getHeader("X-Trace-ID"), clientIp(request), true);
+                    payload.get("prompt"), traceId, clientIp(request), true);
             Long exchangeId = conversationId(payload.get("exchangeId"));
             if (exchangeId != null) historyService.updateAnswer(authentication.getName(), exchangeId, result);
             return ResponseEntity.ok(ApiResponse.success(result, "Aira response refined"));
@@ -61,7 +69,7 @@ public class AIraController {
         } catch (SecurityException ex) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(ex.getMessage(), 403));
         } catch (RuntimeException ex) {
-            log.error("Aira refinement failed for user {}: {}", authentication.getName(), ex.getMessage(), ex);
+            log.error("Aira refinement failed [traceId={}, user={}]: {}", traceId, authentication.getName(), ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(ApiResponse.error("AI refinement did not complete. The grounded answer is still available.", 503));
         }
@@ -119,6 +127,10 @@ public class AIraController {
     private static String clientIp(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");
         return forwarded == null || forwarded.isBlank() ? request.getRemoteAddr() : forwarded.split(",")[0].trim();
+    }
+
+    private static String newTraceId() {
+        return "DOORS-TRC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(java.util.Locale.ROOT);
     }
 
     private static Set<String> authorities(Authentication authentication) {

@@ -1,2 +1,6 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+
+# Preserve binary manuals and screenshots exactly
+*.pdf binary
+*.png binary

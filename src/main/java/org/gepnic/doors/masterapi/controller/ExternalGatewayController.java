@@ -63,6 +63,24 @@ import java.security.cert.X509Certificate;
 @RequiredArgsConstructor
 @Tag(name = "DOORS Gateway Execution Console", description = "Interactive API Orchestration Testing Sandbox")
 public class ExternalGatewayController {
+    @Autowired
+    private org.gepnic.doors.masterapi.service.GatewayProtocolService gatewayProtocol;
+
+    public record ProtocolPolicyUpdate(@jakarta.validation.constraints.NotNull Boolean enabled,
+            @jakarta.validation.constraints.NotNull Boolean deprecated, java.time.Instant retireAt) {}
+
+    @GetMapping("/api-clients/{clientId}/protocol-policies")
+    public ResponseEntity<?> protocolPolicies(@PathVariable Long clientId) {
+        return ResponseEntity.ok(ApiResponse.success(gatewayProtocol.policies(clientId), "Protocol policies"));
+    }
+
+    @PutMapping("/api-clients/{clientId}/queries/{queryId}/protocols/{version}")
+    public ResponseEntity<?> updateProtocolPolicy(@PathVariable Long clientId,@PathVariable Long queryId,
+            @PathVariable int version,@jakarta.validation.Valid @RequestBody ProtocolPolicyUpdate body,
+            java.security.Principal principal) {
+        gatewayProtocol.updatePolicy(clientId,queryId,version,body.enabled(),body.deprecated(),body.retireAt(),principal.getName());
+        return ResponseEntity.ok(ApiResponse.success(null,"Protocol policy updated"));
+    }
 
     private final ReportViewerService reportService;
     private final ApiClientRepository apiClientRepository; 
@@ -642,11 +660,15 @@ public class ExternalGatewayController {
         // 🛡️ 3. INBOUND PAYLOAD UNWRAPPING & DECRYPTION (NIC SPECIFICATION)
         // ========================================================================
         Map<String, Object> payload;
+        Object versionValue = rawRequestBody == null ? null : rawRequestBody.get("protocolVersion");
+        int protocolVersion = versionValue == null ? 1 : versionValue instanceof Integer number && number>0 ? number : -1;
+        gatewayProtocol.requireAllowed(client.getClientId(),uniqueName,protocolVersion);
 
         boolean isInboundEncrypted = rawRequestBody != null && 
                 (rawRequestBody.containsKey("secureData") || rawRequestBody.containsKey("data"));
 
         if (isInboundEncrypted) {
+            try {
             log.info("🔒 [INBOUND-CRYPTO] Processing encrypted wrapper payload for Client: [{}]", authenticatedClient);
 
             String encryptedKeyStr = rawRequestBody.containsKey("encryptedKey") 
@@ -722,11 +744,19 @@ public class ExternalGatewayController {
 
             // Step D: Parse Decrypted JSON Body into Execution Payload Map
             payload = mapper.readValue(decryptedPlainJson, Map.class);
+            if (payload == null) throw new IllegalArgumentException("Missing secure payload");
+            } catch (javax.crypto.BadPaddingException | javax.crypto.IllegalBlockSizeException
+                     | java.security.SignatureException | IllegalArgumentException | ClassCastException
+                     | com.fasterxml.jackson.core.JsonProcessingException invalidCrypto) {
+                throw org.gepnic.doors.masterapi.service.GatewayProtocolService.invalid("DOORS-CRYPTO-INVALID", HttpStatus.BAD_REQUEST);
+            }
 
         } else {
             // Standard Unencrypted Request Payload
             payload = rawRequestBody != null ? rawRequestBody : new HashMap<>();
         }
+
+        gatewayProtocol.validateAndClaim(client.getClientId(), uniqueName, protocolVersion, isInboundEncrypted, payload);
 
         // ========================================================================
         // 🚀 4. EXTRACT PARAMETERS & EXECUTE ORCHESTRATION QUERY

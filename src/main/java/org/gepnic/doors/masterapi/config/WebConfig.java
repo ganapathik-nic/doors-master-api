@@ -19,6 +19,7 @@ import javax.net.ssl.SSLException;
 public class WebConfig implements WebMvcConfigurer {
 
     private final ApiKeyInterceptor apiKeyInterceptor;
+    private final ApiSubscriptionInterceptor apiSubscriptionInterceptor;
 
     /**
      * WebClient Builder configuration:
@@ -66,7 +67,9 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(apiSubscriptionInterceptor).addPathPatterns(MachineApiRoutes.PATTERNS).order(-1);
         registry.addInterceptor(apiKeyInterceptor)
+                .addPathPatterns("/api/v1/master/gateway/handshake")
                 .addPathPatterns("/api/v1/external/**")
                 .addPathPatterns("/api/v1/master/gateway/orchestrate/**")
                 .addPathPatterns("/api/v1/master/reports/orchestrate/**")

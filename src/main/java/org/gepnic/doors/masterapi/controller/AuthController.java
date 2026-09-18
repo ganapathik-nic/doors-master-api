@@ -56,7 +56,6 @@ import java.time.Instant;
 public class AuthController {
 
     private static final String SESSION_COOKIE = "DOORS_SESSION";
-    private static final long SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 
     @Value("${doors.security.session-cookie-secure:true}")
     private boolean secureSessionCookie;
@@ -413,7 +412,7 @@ public class AuthController {
                 .secure(secureSessionCookie)
                 .sameSite("Strict")
                 .path("/")
-                .maxAge(SESSION_MAX_AGE_SECONDS)
+                .maxAge(jwtUtils.getSessionMaxAgeSeconds())
                 .build();
     }
 

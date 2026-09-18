@@ -106,6 +106,7 @@
   }
 
   async function loadPrivateKey() {
+    preparedRequest = null;
     var fileInput = document.getElementById("doors-p12-file");
     var passwordInput = document.getElementById("doors-p12-password");
     var file = fileInput && fileInput.files ? fileInput.files[0] : null;
@@ -337,6 +338,7 @@
 
   async function fetchMasterPublicKey() {
     var response = await fetch("api/v1/master/gateway/.well-known/jwks.json", {
+      credentials: "omit",
       headers: { "Accept": "application/json" }
     });
     if (!response.ok) {
@@ -358,7 +360,25 @@
     return forge.pki.setRsaPublicKey(modulus, exponent);
   }
 
+  var preparedRequest = null;
+  window.doorsPrepareRequest = function (request) {
+    var config = window.doorsSwaggerLaunchConfig || {};
+    var path = new URL(request.url, window.location.href).pathname;
+    var expected = '/api/v1/master/gateway/orchestrate/' + encodeURIComponent(config.uniqueName || '');
+    if (String(request.method).toUpperCase() !== 'POST' || path !== expected) return request;
+    var current;
+    try { current = JSON.stringify(typeof request.body === 'string' ? JSON.parse(request.body) : request.body); }
+    catch (_) { throw new Error('Invalid request JSON. Correct the parameters and rebuild the encrypted request.'); }
+    if (!preparedRequest || !privateKey || preparedRequest.source !== current) {
+      setStatus('Build the encrypted request after loading your key or changing parameters.', 'error');
+      throw new Error('Build the encrypted request after loading your key or changing parameters.');
+    }
+    request.body = preparedRequest.wire;
+    return request;
+  };
+
   async function buildEncryptedRequestWrapper() {
+    preparedRequest = null;
     if (!privateKey) {
       setStatus("Load the matching .p12 and password first", "error");
       return;
@@ -375,13 +395,27 @@
       if (!rawBody) throw new Error("No populated Swagger request body was found.");
 
       // Validate while preserving the exact plaintext bytes used for encryption/signing.
-      JSON.parse(rawBody);
+      var parsedBody = JSON.parse(rawBody);
+      var sourceBody = JSON.stringify(parsedBody);
+      var isDocument = String(launchConfig.operationPath || '').includes('/documents/');
+      if (!isDocument) {
+        delete parsedBody.protocolVersion;
+        if (launchConfig.protocolVersion === 2) {
+          parsedBody.protocolVersion = 2;
+          parsedBody.clientId = launchConfig.clientId;
+          parsedBody.query = launchConfig.uniqueName;
+          parsedBody.requestId = crypto.randomUUID();
+          parsedBody.issuedAt = new Date().toISOString();
+        }
+        rawBody = JSON.stringify(parsedBody);
+      }
       var masterPublicKey = await fetchMasterPublicKey();
       var dynamicAesKey = forge.random.getBytesSync(32);
-      var requestAesKey = dynamicAesKey.substring(0, 16);
+      var requestAesKey = isDocument ? dynamicAesKey.substring(0, 16) : dynamicAesKey;
 
-      var aesCipher = forge.cipher.createCipher("AES-ECB", requestAesKey);
-      aesCipher.start();
+      var requestIv = forge.random.getBytesSync(12);
+      var aesCipher = forge.cipher.createCipher(isDocument ? "AES-ECB" : "AES-GCM", requestAesKey);
+      aesCipher.start(isDocument ? {} : {iv: requestIv, tagLength: 128});
       aesCipher.update(forge.util.createBuffer(forge.util.encodeUtf8(rawBody)));
       if (!aesCipher.finish()) throw new Error("Unable to encrypt the request payload.");
 
@@ -392,9 +426,15 @@
         encryptedKey: forge.util.encode64(
           masterPublicKey.encrypt(dynamicAesKey, "RSAES-PKCS1-V1_5")
         ),
-        secureData: forge.util.encode64(aesCipher.output.getBytes()),
+        secureData: forge.util.encode64(aesCipher.output.getBytes() + (isDocument ? '' : aesCipher.mode.tag.getBytes())),
         signature: forge.util.encode64(privateKey.sign(digest))
       };
+
+      if (!isDocument) {
+        wrapper.iv = forge.util.encode64(requestIv);
+        if (launchConfig.protocolVersion === 2) wrapper.protocolVersion = 2;
+        preparedRequest = { source: sourceBody, wire: JSON.stringify(wrapper) };
+      }
 
       var output = document.getElementById("doors-encrypted-request-output");
       output.textContent =
@@ -402,7 +442,7 @@
       output.hidden = false;
       placeRequestWrapperBeforeResponse(output);
       placeFetchButtonBelowRequestWrapper(output);
-      setStatus("Encrypted request wrapper built successfully", "ready");
+      setStatus("Encrypted request ready. Fetch Data will send this wrapper, not the plain parameters.", "ready");
     } catch (error) {
       setStatus("Request wrapper generation failed: " + (error.message || error), "error");
     }

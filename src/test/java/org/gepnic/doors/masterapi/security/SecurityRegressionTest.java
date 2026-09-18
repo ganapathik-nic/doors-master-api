@@ -175,14 +175,81 @@ class SecurityRegressionTest {
         assertThatThrownBy(() -> grants.require("client-one-scope", request)).isInstanceOf(SecurityException.class);
     }
 
-    @ParameterizedTest @ValueSource(strings={"SELECT 1; SELECT 2", "CALL audit_probe()",
+    @ParameterizedTest @ValueSource(strings={"SELECT 1; SELECT 2", "CALL audit_probe()", "SELECT 1",
+            "UPDATE t SET id = 1", "DELETE FROM t", "ALTER TABLE t ADD COLUMN extra integer",
+            "SELECT id FROM t; UPDATE t SET id = 1",
+            "SELECT 1 -- ordinary comment\n", "SELECT * FROM (SELECT 1) x",
+            "WITH x AS (SELECT 1) SELECT * FROM x",
+            "SELECT '=1+1' AS equals_prefix, '+1+1' AS plus_prefix, '-1+1' AS minus_prefix, '@SUM(1)' AS at_prefix, '  =1+1' AS spaced_equals_prefix",
+            "SELECT '=1+1' AS equals_prefix, '+1+1' AS plus_prefix, '-1+1' AS minus_prefix, '@SUM(1)' AS at_prefix, '  =1+1' AS spaced_equals_prefix FROM gep_properties",
+            "SELECT '=1+1' AS equals_prefix, '+1+1' AS plus_prefix, '-1+1' AS minus_prefix, '@SUM(1)' AS at_prefix, '  =1+1' AS spaced_equals_prefix, filepath FROM gep_properties",
+            "SELECT filepath, '=1+1' AS equals_prefix FROM gep_properties",
+            "SELECT filepath, 1 AS static_label FROM gep_properties",
+            "SELECT filepath, 'Status2' AS label FROM gep_properties",
+            "SELECT filepath, 'Status-Label' AS label FROM gep_properties",
+            "SELECT filepath, 'Status@Label' AS label FROM gep_properties",
+            "SELECT 'Normal Label' FROM gep_properties",
+            "SELECT * FROM (SELECT filepath, '=1+1' AS value FROM gep_properties) x",
+            "SELECT '=1+1' AS value FROM t", "SELECT * FROM (SELECT '=1+1' AS value FROM t) x",
+            "WITH x AS (SELECT '=1+1' AS value FROM t) SELECT * FROM x",
+            "SELECT id FROM t UNION SELECT '=1+1' FROM t",
             "SELECT 1 -- comment\nDELETE FROM audit_probe", "", "SELECT pg_sleep(10)",
             "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x", "SELECT * INTO backup FROM t"})
     void unsafeSqlIsRejected(String sql) { assertThat(SqlSecurityValidator.isSafeSelectOnly(sql)).isFalse(); }
 
-    @ParameterizedTest @ValueSource(strings={"SELECT 1", "SELECT id FROM t WHERE id = :id",
-            "WITH x AS (SELECT id FROM t) SELECT * FROM x", "SELECT 1 -- ordinary comment\n"})
+    @ParameterizedTest @ValueSource(strings={"SELECT id FROM t WHERE id = :id",
+            "SELECT tender_id FROM tenders WHERE tender_id = :p_tender_id",
+            "SELECT tender_id FROM tenders WHERE created_at >= CAST(:p_from_date AS DATE) AND status ILIKE :p_status",
+            "SELECT tender_id FROM tenders WHERE created_at >= :p_from_date::date",
+            "SELECT amount * 1.18 AS gross_amount FROM tenders WHERE amount >= :p_min_amount",
+            "SELECT filepath, 'Update' AS status FROM gep_properties",
+            "SELECT filepath, 'Drop and Create' AS status FROM gep_properties",
+            "SELECT filepath FROM gep_properties WHERE filepath = 'DELETE FROM harmless text'",
+            "SELECT filepath FROM gep_properties -- DROP appears only in this comment\n",
+            "SELECT \"update\" FROM t",
+            "WITH x AS (SELECT id FROM t) SELECT * FROM x", "SELECT id FROM t -- ordinary comment\n",
+            "SELECT id, filepath FROM t", "SELECT 'Normal Label' AS label, filepath FROM t",
+            "SELECT 'स्वीकृत स्थिति' AS label, filepath FROM t",
+            "SELECT COUNT(*) FROM t", "SELECT COUNT(1) FROM t",
+            "SELECT * FROM t"})
     void ordinaryQueriesRemainSupported(String sql) { assertThat(SqlSecurityValidator.isSafeSelectOnly(sql)).isTrue(); }
+
+    @Test void rejectingLegacySourceFreeQueryDoesNotRequireSqlApproval() {
+        var templates = mock(SqlTemplateRepository.class);
+        var legacy = new SqlTemplate();
+        legacy.setQueryId(69L);
+        legacy.setStatus("APPROVED");
+        legacy.setSqlText("SELECT 1");
+        when(templates.findById(69L)).thenReturn(Optional.of(legacy));
+        when(templates.save(legacy)).thenReturn(legacy);
+        var controller = new TemplateController(mock(JdbcTemplate.class), mock(TemplateService.class), templates,
+                mock(MappingService.class), mock(AgentExecutionService.class), mock(DataPullRequestRepository.class),
+                mock(ClientQueryMapRepository.class), mock(AgentRepository.class), mock(DataRequestAccess.class));
+
+        var response = controller.approveAndMap(69L, Map.of("status", "REJECTED"), auth("reviewer", "DATAMANAGER"));
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(legacy.getStatus()).isEqualTo("REJECTED");
+        assertThat(legacy.getAuthorizedAgents()).isEmpty();
+        verify(templates).save(legacy);
+    }
+
+    @Test void sourceFreeQueryCannotBeApprovedEvenWithStatusOnlyPayload() {
+        var templates = mock(SqlTemplateRepository.class);
+        var legacy = new SqlTemplate();
+        legacy.setQueryId(69L);
+        legacy.setStatus("PENDING");
+        legacy.setProposerId("proposer");
+        legacy.setSqlText("SELECT 1");
+        when(templates.findById(69L)).thenReturn(Optional.of(legacy));
+        var controller = new TemplateController(mock(JdbcTemplate.class), mock(TemplateService.class), templates,
+                mock(MappingService.class), mock(AgentExecutionService.class), mock(DataPullRequestRepository.class),
+                mock(ClientQueryMapRepository.class), mock(AgentRepository.class), mock(DataRequestAccess.class));
+
+        var response = controller.approveAndMap(69L, Map.of("status", "APPROVED"), auth("reviewer", "DATAMANAGER"));
+        assertThat(response.getStatusCode().value()).isEqualTo(403);
+        assertThat(legacy.getStatus()).isEqualTo("PENDING");
+        verify(templates, never()).save(any());
+    }
 
     @Test void developerCannotReadUnapprovedEvidence() {
         var repository = mock(ExternalRequestRepository.class);

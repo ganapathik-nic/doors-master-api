@@ -4,10 +4,11 @@
   function showFailure(message) {
     var host = document.getElementById("swagger-ui");
     if (host) {
-      host.innerHTML = '<div style="margin:24px;padding:18px;border:1px solid #dc3545;' +
-        'color:#842029;background:#f8d7da;font:14px sans-serif">' +
-        "Swagger access denied: " + String(message || "Unable to establish a secure session") +
-        "</div>";
+      var notice = document.createElement("div");
+      notice.className = "doors-swagger-failure";
+      notice.textContent = "Swagger access denied: " +
+        String(message || "Unable to establish a secure session");
+      host.replaceChildren(notice);
     }
   }
 
@@ -26,7 +27,7 @@
   async function bootstrap() {
     var launchToken = takeLaunchToken();
     if (!launchToken) {
-      showFailure("Open this console from the authenticated DOORS DataManager screen.");
+      showFailure("Open this console using Test API on the authenticated DOORS API client page.");
       return;
     }
     try {
@@ -45,7 +46,7 @@
         response = await fetch(gatewayBase + "/swagger-sessions/exchange", {
           method: "POST",
           cache: "no-store",
-          credentials: "same-origin",
+          credentials: "omit",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ launchToken: launchToken })
         });
@@ -79,7 +80,7 @@
 
       var openApiResponse = await fetch("v3/api-docs", {
         cache: "no-store",
-        credentials: "same-origin",
+        credentials: "omit",
         headers: {
           Accept: "application/json",
           "X-DOORS-SWAGGER-SESSION": sessionToken
@@ -114,6 +115,8 @@
         operationsSorter: "alpha",
         presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
         requestInterceptor: function (request) {
+          // Machine calls authenticate with the scoped launch/API key, not the portal cookie.
+          request.credentials = "omit";
           request.headers = request.headers || {};
           request.headers["X-DOORS-SWAGGER-SESSION"] = sessionToken;
           if (window.doorsSwaggerLaunchConfig.operationPath &&
@@ -121,7 +124,7 @@
               request.url && request.url.indexOf("/documents/services/") >= 0) {
             request.headers["X-DOORS-REQUIRE-ENCRYPTED-RESPONSE"] = "true";
           }
-          return request;
+          return window.doorsPrepareRequest ? window.doorsPrepareRequest(request) : request;
         },
         responseInterceptor: window.doorsDecryptResponse,
         onComplete: function () {

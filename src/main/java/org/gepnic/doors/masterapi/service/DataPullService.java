@@ -2,10 +2,13 @@ package org.gepnic.doors.masterapi.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.dto.DataPullRequestDTO;
+import org.gepnic.doors.masterapi.dto.MyDataRequestDetails;
 import org.gepnic.doors.masterapi.model.ExternalRequest;
 import org.gepnic.doors.masterapi.repository.DataPullRequestRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -22,6 +25,20 @@ public class DataPullService {
 
     @Autowired
     private DataPullRequestRepository repository;
+
+    @Transactional(readOnly = true)
+    public MyDataRequestDetails getMyRequest(Long id) {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()
+                || auth instanceof AnonymousAuthenticationToken) {
+            throw new SecurityException("Request access denied");
+        }
+        if (id == null || id <= 0) throw new SecurityException("Request access denied");
+        // Scope the database lookup itself; privileged roles cannot bypass ownership here.
+        var request = repository.findByIdAndRequestedBy(id, auth.getName())
+                .orElseThrow(() -> new SecurityException("Request access denied"));
+        return MyDataRequestDetails.from(request);
+    }
 
     /**
      * Processes and stores a new data pull request with its binary attachment.
@@ -52,9 +69,10 @@ public class DataPullService {
     /**
      * Retrieves request history for a specific external user.
      */
-    public List<ExternalRequest> getRequestsByUser(String username) {
+    public List<MyDataRequestDetails> getRequestsByUser(String username) {
         log.info("DOORS-SERVICE: Fetching orchestration history for user: {}", username);
-        return repository.findByRequestedByOrderByCreatedAtDesc(username);
+        return repository.findByRequestedByOrderByCreatedAtDesc(username).stream()
+                .map(MyDataRequestDetails::from).toList();
     }
 
     /**

@@ -53,3 +53,8 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Local runtime data and deployment backups
+/output/
+/exports/
+/security/knowledge/

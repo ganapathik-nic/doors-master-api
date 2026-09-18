@@ -72,6 +72,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({org.springframework.web.bind.MethodArgumentNotValidException.class,
             jakarta.validation.ConstraintViolationException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
             org.springframework.http.converter.HttpMessageNotReadableException.class})
     public ResponseEntity<ProblemDetail> handleValidation(Exception exception, HttpServletRequest request) {
         return problem(request, HttpStatus.BAD_REQUEST, "DOORS-REQUEST-INVALID", "invalid-request",
@@ -108,6 +109,19 @@ public class GlobalExceptionHandler {
                 Map.of());
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ProblemDetail> handleResponseStatus(
+            org.springframework.web.server.ResponseStatusException exception, HttpServletRequest request) {
+        var status = exception.getStatusCode();
+        // Preserve deliberate HTTP denials without reflecting internal exception reasons.
+        return problem(request, status,
+                status.value() == 404 ? "DOORS-RESOURCE-NOT-FOUND" : "DOORS-REQUEST-REJECTED",
+                status.value() == 404 ? "resource-not-found" : "request-rejected",
+                status.value() == 404 ? "Resource not found" : "Request rejected",
+                status.value() == 404 ? "Resource not found" : "The request could not be processed",
+                false, Map.of());
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ProblemDetail> handleRuntime(
             RuntimeException exception,
@@ -127,7 +141,7 @@ public class GlobalExceptionHandler {
 
     private ResponseEntity<ProblemDetail> problem(
             HttpServletRequest request,
-            HttpStatus status,
+            org.springframework.http.HttpStatusCode status,
             String code,
             String problemType,
             String title,

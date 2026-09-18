@@ -117,7 +117,7 @@ doors:
       gateway:
         capacity: 5           # Capacity for automated loops
         refill-minutes: 1
-    jwt-expiration-ms: 14400000 # 4 Hours
+    jwt-expiration-ms: 14400000 # 4 hours absolute session lifetime
     gateway-path-pattern: "/v1/master/gateway/orchestrate/"     
 
 crypto:

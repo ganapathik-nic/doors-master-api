@@ -29,7 +29,10 @@ public class PlaneRolePolicy {
             return EXTERNAL_ROLES.contains(normalizedRole);
         }
 
-        // The API plane and unknown hosts never accept interactive users.
+        if (contains(properties.getApiHosts(), normalizedHost)) {
+            return "APIUSER".equals(normalizedRole);
+        }
+        // Unknown hosts never accept interactive users.
         return false;
     }
 

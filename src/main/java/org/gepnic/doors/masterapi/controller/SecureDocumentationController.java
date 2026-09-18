@@ -34,6 +34,17 @@ public class SecureDocumentationController {
                 .body(service.visibleCatalogue(authentication));
     }
 
+    @GetMapping("/walkthroughs")
+    public ResponseEntity<List<SecureDocumentationService.WalkthroughSummary>> walkthroughs(Authentication authentication) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.visibleWalkthroughs(authentication));
+    }
+
+    @GetMapping("/walkthroughs/{id}")
+    public ResponseEntity<Resource> walkthrough(@PathVariable String id, Authentication authentication) {
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).cacheControl(CacheControl.noStore())
+            .header("X-Content-Type-Options", "nosniff").body(service.resolveWalkthrough(id, authentication));
+    }
+
     @GetMapping("/documents/{documentId}")
     public ResponseEntity<Resource> document(@PathVariable String documentId, Authentication authentication) throws IOException {
         SecureDocumentationService.SecuredDocument document = service.resolve(documentId, authentication);

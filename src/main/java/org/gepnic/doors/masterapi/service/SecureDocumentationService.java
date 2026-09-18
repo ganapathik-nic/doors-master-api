@@ -51,6 +51,25 @@ public class SecureDocumentationService {
         return new SecuredDocument(definition.summary(), resource);
     }
 
+    public record WalkthroughSummary(String id, String title, String description, int steps, String documentId, String version) {}
+
+    private static final List<WalkthroughSummary> WALKTHROUGHS = List.of(
+        new WalkthroughSummary("api-data-sharing", "Share data through an API", "From your first API entry to query and Agent mapping, UAT, Production SDKs and subscriber access.", 35, "api-data-sharing-visual-manual", "2026.09.18")
+    );
+
+    public List<WalkthroughSummary> visibleWalkthroughs(Authentication authentication) {
+        var allowed = visibleCatalogue(authentication).stream().map(DocumentSummary::id).toList();
+        return WALKTHROUGHS.stream().filter(item -> allowed.contains(item.documentId())).toList();
+    }
+
+    public Resource resolveWalkthrough(String id, Authentication authentication) {
+        var guide = visibleWalkthroughs(authentication).stream().filter(item -> item.id().equals(id)).findFirst()
+            .orElseThrow(() -> new ResponseStatusException(NOT_FOUND));
+        Resource resource = new ClassPathResource("secure-walkthroughs/" + guide.id() + ".json");
+        if (!resource.exists()) throw new ResponseStatusException(NOT_FOUND);
+        return resource;
+    }
+
     Set<String> roles(Authentication authentication) {
         if (authentication == null || !authentication.isAuthenticated()) return Set.of();
         Set<String> resolved = new LinkedHashSet<>();
@@ -65,6 +84,7 @@ public class SecureDocumentationService {
     private static Map<String, DocumentDefinition> catalogue() {
         Map<String, DocumentDefinition> values = new LinkedHashMap<>();
         add(values, "data-manager-manual", "Data Manager Operations Manual", "Role Manual", "Governance approvals, registries, mappings, document services and audit review.", List.of("Approvals", "Governance", "Audit"), Set.of(DATAMANAGER));
+        add(values, "api-data-sharing-visual-manual", "API Data Sharing - Visual Data Manager Manual", "Integration", "A first-time Data Manager's illustrated walkthrough: login, API registration, query and Agent mapping, UAT and Production SDKs, certificates, README files, release emails and access schedules.", List.of("API onboarding", "Query mapping", "Agent mapping", "UAT SDK", "Production SDK", "README", "Email handoff", "Subscriptions"), Set.of(DATAMANAGER), "2026.09.18");
         add(values, "developer-manual", "Developer User Manual", "Role Manual", "Safe query authoring, dry runs, parameter contracts and submission.", List.of("SQL templates", "Dry run", "Submission"), Set.of(DEVELOPER, DATAMANAGER));
         add(values, "data-viewer-manual", "Data Viewer User Manual", "Role Manual", "Approved report discovery, parameters, results and responsible export.", List.of("Reports", "Filters", "Export"), Set.of(DATAVIEWER, DATAMANAGER));
         add(values, "external-user-manual", "External User Manual", "Role Manual", "Data request submission, review tracking and approved consumption.", List.of("Requests", "Status", "Reports"), Set.of(EXTERNAL, DATAMANAGER));

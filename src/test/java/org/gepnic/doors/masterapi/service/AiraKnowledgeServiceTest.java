@@ -75,7 +75,7 @@ class AiraKnowledgeServiceTest {
     void everySecuredPdfProducesAuditableChunks() throws Exception {
         var resolver = new PathMatchingResourcePatternResolver();
         var pdfs = resolver.getResources("classpath*:secure-docs/*.pdf");
-        assertEquals(23, pdfs.length, "All catalogue PDFs must be present");
+        assertEquals(24, pdfs.length, "All catalogue PDFs must be present");
 
         for (var pdf : pdfs) {
             List<TextSegment> segments = knowledgeService.parsePdfToSegments(pdf);

@@ -100,7 +100,7 @@ public ResponseEntity<ApiResponse<Object>> submitTemplate(
         // 🛡️ 2. VALIDATE: Check the decrypted plain text for security patterns
         if (!SqlSecurityValidator.isSafeSelectOnly(decryptedSql)) {
             log.warn("DOORS-SECURITY-ALERT: Unauthorized SQL pattern in submission!");
-            return ResponseEntity.status(400).body(ApiResponse.error("Security Violation: Only SELECT queries allowed", 400));
+            return ResponseEntity.status(400).body(ApiResponse.error("Security Violation: SELECT output fields must use table data or plain-text labels; numeric and special-character fixed values are not allowed", 400));
         }
 
         // 🛡️ 3. UPDATE OBJECT: Set the decrypted SQL back into the template for storage
@@ -264,7 +264,12 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
                 }
             }
 
-            if (editedSql != null && !SqlSecurityValidator.isSafeSelectOnly(editedSql)) {
+            // Status-only rejection/disablement must not revalidate historical SQL.
+            // Approval always validates the stored SQL, even if no edit was sent.
+            if (("APPROVED".equals(newStatus) ||
+                    (editedSql != null && !editedSql.equals(template.getSqlText()))) &&
+                    !SqlSecurityValidator.isSafeSelectOnly(
+                            editedSql != null ? editedSql : template.getSqlText())) {
                 return ResponseEntity.status(403).body(ApiResponse.error("Security Violation", 403));
             }
 
@@ -696,8 +701,7 @@ public ResponseEntity<ApiResponse<Object>> testQuery(
             );
 
             throw new SecurityException(
-                    "Only read-only SELECT queries " +
-                            "are authorized for execution"
+                    "SELECT output fields must use table data or plain-text labels; numeric and special-character fixed values are not allowed"
             );
         }
 

@@ -43,6 +43,7 @@ class PlaneRoutingFilterTest {
 
     @Test
     void externalPlaneCannotExposeAdministration() {
+        assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/external/data-pull/my-requests/10"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/external/data-pull/submit"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/master/agents/list/active"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.EXTERNAL, "/api/v1/documentation/catalogue"));
@@ -52,10 +53,17 @@ class PlaneRoutingFilterTest {
     }
 
     @Test
-    void apiPlaneOnlyExposesMachineContractSurface() {
+    void apiPlaneExposesSubscriberPortalAndMachineSurfaceButNotAdministration() {
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/master/gateway/orchestrate/report"));
         assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/v3/api-docs"));
-        assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/documentation/catalogue"));
+        assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/documentation/catalogue"));
+        for (String path : List.of("/api/v1/auth/login", "/api/v1/auth/mfa/verify", "/api/v1/auth/me",
+                "/api/v1/external/api-user/subscription", "/api/v1/external/data-pull/my-list",
+                "/api/v1/external/data-pull/submit", "/api/v1/reports/templates", "/api/v1/reports/execute",
+                "/api/v1/master/agents/list/active"))
+            assertTrue(filter.isAllowed(PlaneRoutingFilter.Plane.API, path), path);
+        assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/admin/users/list"));
+        assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/master/api-subscriptions"));
         assertFalse(filter.isAllowed(PlaneRoutingFilter.Plane.API, "/api/v1/master/dashboard/stats"));
     }
 }

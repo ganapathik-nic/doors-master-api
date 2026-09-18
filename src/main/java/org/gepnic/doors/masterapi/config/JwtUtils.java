@@ -17,10 +17,14 @@ import java.util.Map;
 public class JwtUtils {
 
     private SecretKey ephemeralKey; // 🛡️ Exists only in JVM RAM
-    private static final long EXPIRATION_TIME = 8 * 60 * 60 * 1000; // 8 Hours
+    @org.springframework.beans.factory.annotation.Value("${doors.security.jwt-expiration-ms:14400000}")
+    private long expirationMs = 14400000L;
+
+    public long getSessionMaxAgeSeconds() { return expirationMs / 1000; }
 
     @PostConstruct
     public void init() {
+        if (expirationMs < 1000) throw new IllegalArgumentException("Session lifetime must be at least one second");
         try {
             // 🛡️ Generate a fresh AES-256 key every time the Master-API starts
             KeyGenerator keyGen = KeyGenerator.getInstance("AES");
@@ -42,7 +46,7 @@ public class JwtUtils {
                     .claim("role", role)
                     .claim("sid", sessionId) // 🛡️ CRITICAL: Single Session ID
                     .issueTime(new Date())
-                    .expirationTime(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                    .expirationTime(new Date(System.currentTimeMillis() + expirationMs))
                     .build();
 
             // Header for Direct Encryption using AES-GCM
@@ -64,7 +68,14 @@ public class JwtUtils {
         try {
             EncryptedJWT jwe = EncryptedJWT.parse(token);
             jwe.decrypt(new DirectDecrypter(this.ephemeralKey));
-            return jwe.getJWTClaimsSet().getClaims();
+            JWTClaimsSet claims = jwe.getJWTClaimsSet();
+            Date now = new Date();
+            if (claims.getExpirationTime() == null || !claims.getExpirationTime().after(now)
+                    || claims.getIssueTime() == null || claims.getIssueTime().after(now)
+                    || (claims.getNotBeforeTime() != null && claims.getNotBeforeTime().after(now))) {
+                return null;
+            }
+            return claims.getClaims();
         } catch (Exception e) {
             // If Master-API restarted, old tokens will fail here (Key mismatch)
             return null;

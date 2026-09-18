@@ -112,10 +112,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         } else {
                             // ❌ Failure: Session Mismatch
                             log.warn("DOORS-SECURITY: Session mismatch for user: {}", username);
-                            publishFailure(username, "Multiple session detected / Session Expired", request);
+                            publishFailure(username, "Session no longer valid", request);
                             
-                            response.setHeader("X-Session-Status", "CONFLICT");
-                            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Multiple login detected.");
+                            response.setHeader("X-Session-Status", "INVALIDATED");
+                            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Session is no longer valid. Please sign in again.");
                             return; // Stop filter chain
                         }
                     } else {

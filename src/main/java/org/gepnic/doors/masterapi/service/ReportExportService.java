@@ -130,7 +130,7 @@ public class ReportExportService {
     private void writeCsvRow(BufferedWriter writer, List<String> values) throws Exception {
         for (int index = 0; index < values.size(); index++) {
             if (index > 0) writer.write(',');
-            String value = values.get(index) == null ? "" : values.get(index);
+            String value = spreadsheetSafeCell(values.get(index));
             writer.write('"');
             writer.write(value.replace("\"", "\"\""));
             writer.write('"');
@@ -143,6 +143,17 @@ public class ReportExportService {
         if (value instanceof String text) return text;
         try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value); }
         catch (Exception ignored) { return String.valueOf(value); }
+    }
+
+    /** CSV quoting alone does not stop spreadsheet formula evaluation. */
+    static String spreadsheetSafeCell(String value) {
+        if (value == null || value.isEmpty()) return "";
+        String trimmed = value.stripLeading();
+        if (value.charAt(0) == '\t' || value.charAt(0) == '\r' || value.charAt(0) == '\n'
+                || (!trimmed.isEmpty() && "=+-@".indexOf(trimmed.charAt(0)) >= 0)) {
+            return "'" + value;
+        }
+        return value;
     }
 
     private ExportJob ownedJob(UUID id, String username) {

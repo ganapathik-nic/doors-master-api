@@ -52,10 +52,85 @@ class SecurityHttpIntegrationTest {
         verifyNoInteractions(approval);
     }
 
+    @Test void subscriptionManagementRejectsApiUsersAndDevelopers() throws Exception {
+        for (String role : java.util.List.of("APIUSER", "DEVELOPER", "EXTERNAL", "SECURITYADMIN")) {
+            mvc.perform(get("/api/v1/master/api-subscriptions?from=2026-09-17&to=2026-09-17")
+                    .with(user("account").authorities(new SimpleGrantedAuthority(role))))
+                    .andExpect(status().isForbidden());
+            mvc.perform(put("/api/v1/master/api-subscriptions/users/1/license").with(csrf())
+                    .with(user("account").authorities(new SimpleGrantedAuthority(role)))
+                    .contentType("application/json").content("{}"))
+                    .andExpect(status().isForbidden());
+            mvc.perform(put("/api/v1/master/api-subscriptions/users/1/weekly-access").with(csrf())
+                    .with(user("account").authorities(new SimpleGrantedAuthority(role)))
+                    .contentType("application/json").content("{\"version\":0,\"restricted\":false,\"slots\":[]}"))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test void subscriberDashboardUsesAuthenticatedIdentityAndReadRequiresCsrf() throws Exception {
+        var apiUser=user("subscriber").authorities(new SimpleGrantedAuthority("APIUSER"));
+        mvc.perform(get("/api/v1/external/api-user/subscription?from=2026-09-17&to=2026-09-17&username=victim")
+                .with(apiUser)).andExpect(status().isOk());
+        verify(context.getBean(ApiSubscriberDashboardService.class)).dashboard(eq("subscriber"), any(), any());
+        mvc.perform(post("/api/v1/external/api-user/subscription/notices/1/read").with(apiUser))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/external/api-user/subscription/notices/1/read").with(apiUser).with(csrf()))
+                .andExpect(status().isOk());
+        verify(context.getBean(ApiSubscriberDashboardService.class)).markRead(1L,"subscriber");
+    }
+
+    @Test void managerCanReadSubscriptionOverview() throws Exception {
+        mvc.perform(get("/api/v1/master/api-subscriptions?from=2026-09-17&to=2026-09-17")
+                .with(user("manager").authorities(new SimpleGrantedAuthority("DATAMANAGER"))))
+                .andExpect(status().isOk());
+    }
+    @Test void apiUserCanReadInteractiveReportsButCannotManageSubscriptions() throws Exception {
+        var subscriber=user("subscriber").authorities(new SimpleGrantedAuthority("APIUSER"));
+        mvc.perform(get("/api/v1/reports/templates").with(subscriber)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/reports/templates")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/reports/execute").with(subscriber)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/reports/execute").with(subscriber).with(csrf())).andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/master/api-subscriptions?from=2026-09-17&to=2026-09-17").with(subscriber))
+                .andExpect(status().isForbidden());
+    }
+    @Test void weeklyScheduleRequiresManagerCsrfAndValidWeekdays() throws Exception {
+        var manager=user("manager").authorities(new SimpleGrantedAuthority("DATAMANAGER"));
+        String path="/api/v1/master/api-subscriptions/users/1/weekly-access";
+        String valid="{\"version\":0,\"restricted\":false,\"slots\":[]}";
+        mvc.perform(put(path).with(manager).contentType("application/json").content(valid)).andExpect(status().isForbidden());
+        mvc.perform(put(path).with(manager).with(csrf()).contentType("application/json").content(valid)).andExpect(status().isOk());
+        mvc.perform(put(path).with(manager).with(csrf()).contentType("application/json")
+                .content("{\"version\":0,\"restricted\":true,\"slots\":[{\"startDay\":8,\"startTime\":\"09:00\",\"endDay\":1,\"endTime\":\"18:00\"}]}"))
+                .andExpect(status().isBadRequest());
+    }
+    @Test void subscriptionPeriodWritesAreManagerOnlyAndCsrfProtected() throws Exception {
+        String path="/api/v1/master/api-subscriptions/users/1/periods";
+        String valid="{\"validFrom\":\"2026-04-01\",\"validTo\":\"2027-03-31\",\"gepnicDue\":100,\"gepnicPaid\":0,\"doorsDue\":0,\"doorsPaid\":0,\"notes\":\"\",\"version\":0}";
+        var manager=user("manager").authorities(new SimpleGrantedAuthority("DATAMANAGER"));
+        var subscriber=user("subscriber").authorities(new SimpleGrantedAuthority("APIUSER"));
+        mvc.perform(post(path).with(subscriber).with(csrf()).contentType("application/json").content(valid)).andExpect(status().isForbidden());
+        mvc.perform(put(path+"/2").with(subscriber).with(csrf()).contentType("application/json").content(valid)).andExpect(status().isForbidden());
+        mvc.perform(post(path).with(manager).contentType("application/json").content(valid)).andExpect(status().isForbidden());
+        mvc.perform(post(path).with(manager).with(csrf()).contentType("application/json").content(valid)).andExpect(status().isOk());
+        mvc.perform(post(path).with(manager).with(csrf()).contentType("application/json").content(valid.replace("\"gepnicDue\":100","\"gepnicDue\":-1"))).andExpect(status().isBadRequest());
+    }
+
     @Test void viewerCannotUseDeveloperFunction() throws Exception {
         mvc.perform(post("/api/v1/master/governance/propose").with(csrf())
                 .with(user("viewer").authorities(new SimpleGrantedAuthority("DATAVIEWER")))
                 .contentType("application/json").content(validBody())).andExpect(status().isForbidden());
+        verifyNoInteractions(approval);
+    }
+
+    @Test void developerCannotApproveGovernanceOrTemplateEvenWithCsrf() throws Exception {
+        var developer = user("dev").authorities(new SimpleGrantedAuthority("DEVELOPER"));
+        mvc.perform(post("/api/v1/governance/requests/999999999/approve")
+                .with(csrf()).with(developer)).andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/master/templates/status/999999999")
+                .with(csrf()).with(developer)
+                .contentType("application/json").content("{\"status\":\"APPROVED\"}"))
+                .andExpect(status().isForbidden());
         verifyNoInteractions(approval);
     }
 
@@ -86,9 +161,79 @@ class SecurityHttpIntegrationTest {
 
     private String validBody() { return "{\"uniqueName\":\"safe_query\",\"sqlText\":\"SELECT 1\"}"; }
 
+    @Test void logoutRequiresCsrf() throws Exception {
+        mvc.perform(post("/api/v1/auth/logout").with(user("dev")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test void logoutRejectsInvalidCsrf() throws Exception {
+        mvc.perform(post("/api/v1/auth/logout").with(user("dev")).with(csrf().useInvalidToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test void logoutAcceptsValidCsrf() throws Exception {
+        mvc.perform(post("/api/v1/auth/logout").with(user("dev")).with(csrf().asHeader()))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test void airaChatIsRestrictedToManagerRolesAndCsrf() throws Exception {
+        String path = "/api/v1/master/aira/chat";
+        mvc.perform(post(path).with(csrf()).with(user("external")
+                .authorities(new SimpleGrantedAuthority("EXTERNAL"))))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(path).with(csrf()).with(user("developer")
+                .authorities(new SimpleGrantedAuthority("DEVELOPER"))))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(path).with(user("manager")
+                .authorities(new SimpleGrantedAuthority("DATAMANAGER"))))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(path).with(csrf()).with(user("manager")
+                .authorities(new SimpleGrantedAuthority("DATAMANAGER"))))
+                .andExpect(status().isNoContent());
+    }
+
+    // Isolates the production filter chain from logout database side effects.
+    @org.springframework.web.bind.annotation.RestController
+    static class LogoutProbe {
+        @org.springframework.web.bind.annotation.PostMapping("/api/v1/auth/logout")
+        org.springframework.http.ResponseEntity<Void> logout() {
+            return org.springframework.http.ResponseEntity.noContent().build();
+        }
+    }
+
+    @org.springframework.web.bind.annotation.RestController
+    static class AiraProbe {
+        @org.springframework.web.bind.annotation.PostMapping("/api/v1/master/aira/chat")
+        org.springframework.http.ResponseEntity<Void> chat() {
+            return org.springframework.http.ResponseEntity.noContent().build();
+        }
+    }
+    @org.springframework.web.bind.annotation.RestController
+    static class InteractiveReportProbe {
+        @org.springframework.web.bind.annotation.GetMapping("/api/v1/reports/templates")
+        org.springframework.http.ResponseEntity<Void> templates() { return org.springframework.http.ResponseEntity.noContent().build(); }
+        @org.springframework.web.bind.annotation.PostMapping("/api/v1/reports/execute")
+        org.springframework.http.ResponseEntity<Void> execute() { return org.springframework.http.ResponseEntity.noContent().build(); }
+    }
+
     @Configuration @EnableWebMvc
     @Import({SecurityConfig.class, GlobalExceptionHandler.class})
     static class Config {
+        @Bean ApiSubscriptionService subscriptionService() { return mock(ApiSubscriptionService.class); }
+        @Bean ApiSubscriberDashboardService subscriberDashboardService() {
+            var service=mock(ApiSubscriberDashboardService.class);
+            when(service.dashboard(any(), any(), any())).thenAnswer(i -> new java.util.LinkedHashMap<String,Object>());
+            return service;
+        }
+        @Bean org.gepnic.doors.masterapi.controller.ApiSubscriberDashboardController subscriberDashboard(ApiSubscriberDashboardService service) {
+            return new org.gepnic.doors.masterapi.controller.ApiSubscriberDashboardController(service);
+        }
+        @Bean org.gepnic.doors.masterapi.controller.ApiSubscriptionController subscriptions(ApiSubscriptionService service, ApiSubscriberDashboardService dashboard) {
+            return new org.gepnic.doors.masterapi.controller.ApiSubscriptionController(service,dashboard);
+        }
+        @Bean LogoutProbe logoutProbe() { return new LogoutProbe(); }
+        @Bean AiraProbe airaProbe() { return new AiraProbe(); }
+        @Bean InteractiveReportProbe interactiveReportProbe() { return new InteractiveReportProbe(); }
         @Bean UserRepository users() { return mock(UserRepository.class); }
         @Bean ApiClientRepository clients() { return mock(ApiClientRepository.class); }
         @Bean DoorsSecurityProperties properties() { return new DoorsSecurityProperties(); }

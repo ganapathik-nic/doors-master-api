@@ -45,9 +45,13 @@ class PlaneRolePolicyTest {
     }
 
     @Test
-    void apiAndUnknownPlanesRejectInteractiveUsers() {
+    void apiPlaneAcceptsOnlyApiUsersAndUnknownPlanesRejectAllUsers() {
         assertFalse(policy.isRoleAllowed("doorsapi.doors.test", "External"));
-        assertFalse(policy.isRoleAllowed("doorsapi.doors.test", "ApiUser"));
+        assertTrue(policy.isRoleAllowed("doorsapi.doors.test", "ApiUser"));
+        assertTrue(policy.isRoleAllowed("doorsapi.doors.test", "ROLE_APIUSER"));
+        assertFalse(policy.isRoleAllowed("doorsapi.doors.test", "DataManager"));
+        assertFalse(policy.isRoleAllowed("doorsapi.doors.test", "Developer"));
+        assertFalse(policy.isRoleAllowed("doorsapi.doors.test", "SecurityAdmin"));
         assertFalse(policy.isRoleAllowed("unassigned.doors.test", "DataManager"));
     }
 

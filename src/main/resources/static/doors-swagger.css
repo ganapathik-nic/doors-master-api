@@ -1,0 +1,118 @@
+.doors-crypto-panel {
+      box-sizing: border-box;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 24px;
+      color: #fff;
+      background: #17202a;
+      margin: 16px 0;
+      border: 1px solid #34495e;
+      border-left: 4px solid #49cc90;
+      border-radius: 4px;
+      font: 13px sans-serif;
+    }
+    .doors-crypto-panel strong { margin-right: 8px; }
+    .doors-crypto-panel input {
+      box-sizing: border-box;
+      min-height: 32px;
+      padding: 5px 8px;
+      color: #17202a;
+      background: #fff;
+      border: 1px solid #9aa7b2;
+      border-radius: 4px;
+    }
+    .doors-crypto-panel input[type="password"] { width: 190px; }
+    .doors-decrypt-button {
+      min-height: 32px;
+      padding: 6px 14px;
+      color: #fff;
+      background: #1f8f5f;
+      border: 0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .doors-decrypt-button:disabled { cursor: not-allowed; opacity: .45; }
+    .doors-decrypted-action-button { margin-left: 8px; }
+    .doors-crypto-status { color: #f5b041; }
+    .doors-crypto-status.ready { color: #49cc90; }
+    .doors-crypto-status.error { color: #ff6b6b; }
+    .doors-crypto-note {
+      flex-basis: 100%;
+      color: #c8d1d9;
+      font-size: 11px;
+    }
+    .doors-decrypted-output {
+      flex-basis: 100%;
+      margin: 4px 0 0;
+      padding: 12px;
+      max-height: 420px;
+      overflow: auto;
+      color: #e8f5e9;
+      background: #0d1117;
+      border: 1px solid #34495e;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .doors-catalogue {
+      margin: 16px auto;
+      max-width: 1460px;
+      padding: 0 20px;
+      font: 13px sans-serif;
+    }
+    .doors-catalogue h2 { color: #17202a; margin-bottom: 4px; }
+    .doors-catalogue-intro { color: #52606d; margin-top: 0; }
+    .doors-contract {
+      margin: 8px 0;
+      border: 1px solid #d8dee4;
+      border-radius: 4px;
+      background: #fff;
+    }
+    .doors-contract summary {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .doors-contract-status {
+      padding: 3px 7px;
+      border-radius: 10px;
+      font-size: 10px;
+      color: #fff;
+    }
+    .doors-contract-status.validated { background: #1f8f5f; }
+    .doors-contract-status.undiscovered { background: #b7791f; }
+    .doors-contract-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 12px;
+      padding: 0 12px 12px;
+    }
+    .doors-contract-grid pre {
+      max-height: 340px;
+      overflow: auto;
+      padding: 12px;
+      color: #e8f5e9;
+      background: #0d1117;
+      white-space: pre-wrap;
+    }
+    .doors-catalogue-error { color: #b42318; }
+    .doors-contract-export {
+      margin: 0 12px 14px;
+      padding: 8px 14px;
+      border: 1px solid #176b3a;
+      border-radius: 4px;
+      color: #fff;
+      background: #198754;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .doors-contract-export:hover { background: #146c43; }
+    .doors-contract-export:disabled { cursor: wait; opacity: .65; }
+/* Failure notices remain text-only and compatible with strict style CSP. */
+.doors-swagger-failure { margin:24px; padding:18px; border:1px solid #dc3545; color:#842029; background:#f8d7da; font:14px sans-serif; }

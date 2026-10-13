@@ -165,7 +165,7 @@ class SecurityRegressionTest {
         var doc = Map.<String,Object>of("downloadId", "1", "serviceDocCode", "AOC", "fileName", "a.pdf", "packetType", "AOC");
         grants.issue("client-one-scope", List.of(doc), Map.of("tenderId", "authorized-tender"));
         var key = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(jdbc).update(contains("INSERT INTO"), key.capture(), anyString());
+        verify(jdbc).update(argThat((String sql) -> sql.contains("INSERT INTO") && sql.contains("'infinity'::timestamptz")), key.capture(), anyString());
         when(jdbc.queryForList(contains("SELECT CAST"), eq(key.getValue())))
                 .thenReturn(List.of(Map.of("params_json", "{\"tenderId\":\"authorized-tender\"}")));
         var request = new HashMap<String,Object>(Map.of("downloadId", "1", "docCode", "AOC", "fileName", "a.pdf", "packetType", "AOC"));

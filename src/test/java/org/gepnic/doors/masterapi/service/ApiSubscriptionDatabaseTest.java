@@ -38,6 +38,7 @@ class ApiSubscriptionDatabaseTest {
         jdbc.execute("CREATE TEMP TABLE users(user_id INTEGER PRIMARY KEY, username TEXT, role TEXT)");
         jdbc.execute("CREATE TEMP TABLE user_api_clients(user_id INTEGER, client_id BIGINT, PRIMARY KEY(user_id,client_id))");
         jdbc.execute("CREATE TEMP TABLE user_authorized_agents(user_name TEXT, agent_id VARCHAR(255))");
+        jdbc.execute("CREATE TEMP TABLE document_service_registry(manifest_client_name TEXT, agent_id VARCHAR(255), is_active BOOLEAN)");
         String sql=Files.readString(Path.of("src/main/resources/db/migration/V2026091701__api_subscriptions.sql"))
                 .replace("CREATE TABLE ","CREATE TEMP TABLE ");
         jdbc.execute(sql);
@@ -150,6 +151,37 @@ class ApiSubscriptionDatabaseTest {
         assertEquals(Set.of(1L,3L),clients.stream().map(c->((Number)c.get("clientId")).longValue()).collect(java.util.stream.Collectors.toSet()));
         assertEquals(350,clients.stream().mapToInt(c->((Number)((Map<?,?>)c.get("usage")).get("responseBytes")).intValue()).sum());
     }
+    @Test void documentOnlyClientsAreAttributedWithoutDuplicatingQueryOrSharedServiceMappings() {
+        subscriptions.save(1,value(true,0),"manager");
+        jdbc.update("INSERT INTO external_api_clients VALUES (4,'Document client',true)");
+        jdbc.update("INSERT INTO document_service_registry VALUES ('document CLIENT','Dev-01',true),('Document client','Dev-01',false),('Client A','Dev-01',true)");
+        jdbc.update("""
+                INSERT INTO api_egress_events(client_id,endpoint,status_code,response_bytes,record_count,duration_ms,transfer_complete,occurred_at)
+                VALUES (4,'/api/v1/master/gateway/documents/services/test/download',200,1000,0,10,true,'2026-09-17T08:00:00Z'),
+                       (4,'/api/v1/master/gateway/documents/services/test/download',200,200,0,10,false,'2026-09-17T08:00:00Z'),
+                       (1,'/api/test',200,50,1,10,true,'2026-09-17T08:00:00Z'),
+                       (2,'/api/test',200,900,1,10,true,'2026-09-17T08:00:00Z')
+                """);
+        var day=LocalDate.parse("2026-09-17");
+        for (String scope : new String[]{null,"alice"}) {
+            var result=dashboard.dashboard(scope,day,day);
+            var user=((List<Map<String,Object>>)result.get("subscribers")).stream()
+                    .filter(u->"alice".equals(u.get("username"))).findFirst().orElseThrow();
+            assertEquals(1250L,((Number)user.get("responseBytes")).longValue());
+            assertEquals(3L,((Number)user.get("requests")).longValue());
+            assertEquals(1L,((Number)user.get("failed")).longValue());
+            var clients=(List<Map<String,Object>>)user.get("clients");
+            assertEquals(3,clients.size());
+            assertEquals(1250L,clients.stream().mapToLong(c->((Number)((Map<?,?>)c.get("usage")).get("responseBytes")).longValue()).sum());
+            assertEquals(scope==null?2150L:1250L,((Number)((Map<?,?>)result.get("totals")).get("responseBytes")).longValue());
+            if(scope!=null) {
+                assertEquals(1250L,((Number)((Map<?,?>)((List<?>)result.get("daily")).getFirst()).get("responseBytes")).longValue());
+            }
+        }
+        assertEquals(List.of("Dev-01"),subscriptions.clients("alice").stream()
+                .filter(c->"Document client".equals(c.get("clientName"))).findFirst().orElseThrow().get("agents"));
+    }
+
     @Test void renewalPreservesCurrentPeriodAndTotalsAllUnpaidBalancesWithoutOffsettingCredits() {
         subscriptions.save(1,value(true,0),"manager");
         var today=LocalDate.now();

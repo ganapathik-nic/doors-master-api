@@ -37,8 +37,8 @@ public class SqlSecurityValidator {
     private static final Pattern PLAIN_TEXT_LABEL = Pattern.compile("\\p{L}[\\p{L}\\p{M}]*(?: +\\p{L}[\\p{L}\\p{M}]*)*");
 
     /**
-     * Accepts one read-only SELECT where each output field depends on table data
-     * or is a plain alphabetic label.
+     * Accepts one table-backed SELECT or a function-only fn_ template.
+     * Function bodies are trusted through database permissions, not inspected here.
      * @param sql The SQL string to validate
      * @return true for a source-backed SELECT without forbidden operations.
      */
@@ -51,6 +51,7 @@ public class SqlSecurityValidator {
             if (statements.getStatements().size() != 1
                     || !(statements.getStatements().getFirst() instanceof Select select)) return false;
             if (PATTERN.matcher(maskNonCode(sql)).find()) return false;
+            if (isFunctionQuery(select)) return true;
             // A table name or one real column must not launder unsafe fixed fields.
             // Inspect every projected field in every SELECT branch.
             return !new TablesNamesFinder().getTableList(select).isEmpty()
@@ -59,6 +60,43 @@ public class SqlSecurityValidator {
         } catch (Exception exception) {
             return false;
         }
+    }
+
+    // Function-only templates trust the fn_ naming convention and database permissions.
+    // This allowance does not inspect the function body.
+    private static boolean isFunctionQuery(Select select) {
+        if (select.getWithItemsList() != null && !select.getWithItemsList().isEmpty()) return false;
+        if (!(select.getSelectBody() instanceof PlainSelect plain)
+                || plain.getFromItem() != null || plain.getJoins() != null
+                || plain.getWhere() != null || plain.getHaving() != null
+                || plain.getGroupBy() != null || plain.getOrderByElements() != null
+                || plain.getLimit() != null || plain.getOffset() != null || plain.getFetch() != null
+                || plain.getSelectItems() == null || plain.getSelectItems().size() != 1) return false;
+        if (!(plain.getSelectItems().getFirst() instanceof SelectExpressionItem item)
+                || !(item.getExpression() instanceof Function function)) return false;
+        if (function.getName() == null || !function.getName().matches(
+                "(?i)(?:[a-z_][a-z0-9_]*\\.)?fn_[a-z0-9_]+")) return false;
+        if (function.isAllColumns() || function.isDistinct()) return false;
+        return function.getParameters() == null || function.getParameters().getExpressions().stream()
+                .allMatch(SqlSecurityValidator::isFunctionArgument);
+    }
+
+    private static boolean isFunctionArgument(net.sf.jsqlparser.expression.Expression expression) {
+        if (expression instanceof net.sf.jsqlparser.expression.CastExpression cast)
+            return isFunctionArgument(cast.getLeftExpression());
+        if (expression instanceof net.sf.jsqlparser.expression.Parenthesis parenthesis)
+            return isFunctionArgument(parenthesis.getExpression());
+        if (expression instanceof net.sf.jsqlparser.expression.SignedExpression signed)
+            return isFunctionArgument(signed.getExpression());
+        return expression instanceof net.sf.jsqlparser.expression.JdbcNamedParameter
+                || expression instanceof net.sf.jsqlparser.expression.JdbcParameter
+                || expression instanceof StringValue
+                || expression instanceof net.sf.jsqlparser.expression.LongValue
+                || expression instanceof net.sf.jsqlparser.expression.DoubleValue
+                || expression instanceof net.sf.jsqlparser.expression.NullValue
+                || expression instanceof net.sf.jsqlparser.expression.DateValue
+                || expression instanceof net.sf.jsqlparser.expression.TimeValue
+                || expression instanceof net.sf.jsqlparser.expression.TimestampValue;
     }
 
     // Keywords in values, quoted identifiers and comments are not SQL operations.

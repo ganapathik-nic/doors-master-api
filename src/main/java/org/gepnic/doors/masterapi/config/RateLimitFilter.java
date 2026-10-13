@@ -37,6 +37,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         String uri = request.getRequestURI();
+        // Binary downloads retain controller authorization but have no request-rate cap.
+        String path = uri.substring(request.getContextPath().length());
+        if ("POST".equalsIgnoreCase(request.getMethod())
+                && path.matches("/api/v1/master/gateway/documents/(?:services/[^/]+|[^/]+)/download")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
         String key = resolveClientKey(request); // Usually IP or Username
         
         // Determine which policy to use based on path

@@ -60,6 +60,7 @@ doors:
 
   documents:
     curl-executable: ${DOORS_CURL_EXECUTABLE:curl}
+    ssl-no-revoke: ${DOORS_DOCUMENT_SSL_NO_REVOKE:true}
     authorization-secret: ${DOORS_DOCUMENT_AUTH_SECRET:SecretKeyForReports}
     authorization-client-id: ${DOORS_DOCUMENT_AUTH_CLIENT_ID:101}
 

@@ -83,6 +83,22 @@ public class SecureDocumentationService {
 
     private static Map<String, DocumentDefinition> catalogue() {
         Map<String, DocumentDefinition> values = new LinkedHashMap<>();
+        values.put("doors-platform-promo", new DocumentDefinition("doors-platform-promo", "DOORS Platform Promo", "Video",
+                "Watch the introduction to DOORS, opening with a dramatic invitation to stop building a new API for every data request: reusable data sharing, quicker external integration, platform features, five RBAC roles, security, onboarded services and architecture.",
+                List.of("Platform overview", "RBAC", "Security", "Architecture", "Data sharing"), ALL,
+                "doors-platform-promo.mp4", "6.0", "video/mp4"));
+        add(values, "gepnic-sasci-integration", "GePNIC - SASCI Integration Document", "Integration",
+                "23-page integration reference for AOC Details, Financial Evaluation Details and Tender Status, including date inputs, data-field tables and complete sample JSON annexures.",
+                List.of("SASCI", "Tender Status", "Financial Evaluation", "AOC", "API fields", "Sample JSON"),
+                Set.of(DATAMANAGER, DEVELOPER, APIUSER, SECURITYADMIN), "1.0");
+        add(values, "gepnic-sasci-secured-data-sharing", "GePNIC - SASCI Secured Data Sharing", "Integration",
+                "12-page explanation of the current secured-sharing implementation: API-key usage, request encryption and signing, access controls, response decryption and verification, audit evidence and local control-test results.",
+                List.of("SASCI", "API key", "Encryption", "Digital signatures", "Decryption", "Audit evidence"),
+                Set.of(DATAMANAGER, DEVELOPER, APIUSER, SECURITYADMIN), "1.0");
+        add(values, "rate-policy-configuration-implementation", "DOORS Rate Policy Configuration and Implementation", "Technical",
+                "Token bucket limits, caller and path scope, refill examples, configuration, HTTP 429 handling and SDK retry behavior.",
+                List.of("Rate limits", "Token bucket", "HTTP 429", "Configuration", "SDK retries"),
+                Set.of(DATAMANAGER, DEVELOPER, APIUSER, SECURITYADMIN), "1.0");
         add(values, "data-manager-manual", "Data Manager Operations Manual", "Role Manual", "Governance approvals, registries, mappings, document services and audit review.", List.of("Approvals", "Governance", "Audit"), Set.of(DATAMANAGER));
         add(values, "api-data-sharing-visual-manual", "API Data Sharing - Visual Data Manager Manual", "Integration", "A first-time Data Manager's illustrated walkthrough: login, API registration, query and Agent mapping, UAT and Production SDKs, certificates, README files, release emails and access schedules.", List.of("API onboarding", "Query mapping", "Agent mapping", "UAT SDK", "Production SDK", "README", "Email handoff", "Subscriptions"), Set.of(DATAMANAGER), "2026.09.18");
         add(values, "developer-manual", "Developer User Manual", "Role Manual", "Safe query authoring, dry runs, parameter contracts and submission.", List.of("SQL templates", "Dry run", "Submission"), Set.of(DEVELOPER, DATAMANAGER));
@@ -117,11 +133,11 @@ public class SecureDocumentationService {
 
     private static void add(Map<String, DocumentDefinition> target, String id, String title, String category,
                             String description, List<String> topics, Set<String> roles, String version) {
-        target.put(id, new DocumentDefinition(id, title, category, description, topics, roles, id + ".pdf", version));
+        target.put(id, new DocumentDefinition(id, title, category, description, topics, roles, id + ".pdf", version, "application/pdf"));
     }
 
     private record DocumentDefinition(String id, String title, String category, String description,
-                                      List<String> topics, Set<String> roles, String fileName, String version) {
+                                      List<String> topics, Set<String> roles, String fileName, String version, String mediaType) {
         DocumentSummary summary() {
             List<String> audiences = new ArrayList<>();
             if (roles.contains(DATAMANAGER)) audiences.add("Data Manager");
@@ -131,12 +147,12 @@ public class SecureDocumentationService {
             if (roles.contains(APIUSER)) audiences.add("API User");
             if (roles.contains(SECURITYADMIN)) audiences.add("Security Administrator");
             return new DocumentSummary(id, title, category, description, topics, List.copyOf(audiences),
-                    "Available", version, "/api/v1/documentation/documents/" + id);
+                    "Available", version, "/api/v1/documentation/documents/" + id, mediaType, fileName);
         }
     }
 
     public record DocumentSummary(String id, String title, String category, String description,
                                   List<String> topics, List<String> audiences, String status,
-                                  String version, String endpoint) { }
+                                  String version, String endpoint, String mediaType, String fileName) { }
     public record SecuredDocument(DocumentSummary summary, Resource resource) { }
 }

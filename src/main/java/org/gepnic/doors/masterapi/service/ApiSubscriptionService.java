@@ -18,15 +18,23 @@ public class ApiSubscriptionService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
 
+    // Reporting includes query and document-service mappings, including inactive services
+    // whose historical egress must remain visible. UNION avoids duplicate attribution.
+    public static final String REPORTING_CLIENT_AGENTS = """
+        (SELECT c.client_id, m.agent_id FROM external_api_clients c
+         JOIN user_authorized_agents m ON m.user_name=c.client_name
+         UNION SELECT c.client_id, d.agent_id FROM external_api_clients c
+         JOIN document_service_registry d ON lower(d.manifest_client_name)=lower(c.client_name))
+        """;
+
     // A configured subscriber covers every key mapped to their one licensed Agent.
     // Before configuration the existing explicit client assignments provide dashboard visibility.
     public static final String SUBSCRIBER_CLIENTS = """
         (SELECT uc.user_id, uc.client_id FROM user_api_clients uc
          WHERE NOT EXISTS (SELECT 1 FROM api_user_licenses l WHERE l.user_id=uc.user_id)
          UNION SELECT l.user_id, c.client_id FROM api_user_licenses l
-         JOIN user_authorized_agents m ON m.agent_id=l.agent_id
-         JOIN external_api_clients c ON c.client_name=m.user_name)
-        """;
+         JOIN %s c ON c.agent_id=l.agent_id)
+        """.formatted(REPORTING_CLIENT_AGENTS);
 
     public ApiLicense license(long userId) {
         var accounts = jdbc.queryForList("SELECT agent_id,service_enabled,version FROM api_user_licenses WHERE user_id=?", userId);
@@ -246,7 +254,7 @@ public class ApiSubscriptionService {
             long id=((Number)row.get("clientId")).longValue();
             row.put("access",Boolean.TRUE.equals(row.get("clientActive"))?access(id):new ApiLicensePolicy.Decision("CLIENT-INACTIVE","API client is inactive.",false));
             row.put("schedule",schedule(id));
-            row.put("agents",jdbc.queryForList("SELECT agent_id FROM user_authorized_agents WHERE user_name=? ORDER BY agent_id",String.class,row.get("clientName")));
+            row.put("agents",jdbc.queryForList("SELECT agent_id FROM "+REPORTING_CLIENT_AGENTS+" ca WHERE client_id=? ORDER BY agent_id",String.class,id));
         }
         return rows;
     }

@@ -48,9 +48,9 @@ public class SecureDocumentationController {
     @GetMapping("/documents/{documentId}")
     public ResponseEntity<Resource> document(@PathVariable String documentId, Authentication authentication) throws IOException {
         SecureDocumentationService.SecuredDocument document = service.resolve(documentId, authentication);
-        String fileName = document.summary().id() + ".pdf";
+        String fileName = document.summary().fileName();
         return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
+                .contentType(MediaType.parseMediaType(document.summary().mediaType()))
                 .contentLength(document.resource().contentLength())
                 .cacheControl(CacheControl.noStore())
                 .header("Pragma", "no-cache")

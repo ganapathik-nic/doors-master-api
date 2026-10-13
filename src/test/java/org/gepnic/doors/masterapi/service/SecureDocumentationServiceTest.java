@@ -17,7 +17,7 @@ class SecureDocumentationServiceTest {
     @Test
     void dataManagerReceivesCompleteCatalogue() {
         var documents = service.visibleCatalogue(auth("DATAMANAGER"));
-        assertEquals(24, documents.size());
+        assertEquals(28, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("hosting-deployment-operations")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-process-flow-flyer")));
         assertTrue(service.resolve("doors-process-flow-flyer", auth("DATAMANAGER")).resource().exists());
@@ -31,10 +31,41 @@ class SecureDocumentationServiceTest {
     @Test
     void externalUserReceivesOnlySharedAndRoleManuals() {
         var documents = service.visibleCatalogue(auth("ROLE_EXTERNAL"));
-        assertEquals(7, documents.size());
+        assertEquals(8, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("external-user-manual")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-rbac-security-flyer")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("password-policy-mfa")));
+    }
+
+    @Test
+    void promoAndIntegrationGuideUseTheirIntendedAudiencesAndFormats() {
+        for (String role : List.of("EXTERNAL", "APIUSER", "DEVELOPER", "DATAVIEWER", "SECURITYADMIN", "DATAMANAGER")) {
+            var promo = service.resolve("doors-platform-promo", auth(role));
+            assertEquals("video/mp4", promo.summary().mediaType());
+            assertEquals("doors-platform-promo.mp4", promo.summary().fileName());
+            assertTrue(promo.resource().exists());
+        }
+        for (String role : List.of("APIUSER", "DEVELOPER", "SECURITYADMIN", "DATAMANAGER")) {
+            assertTrue(service.resolve("rate-policy-configuration-implementation", auth(role)).resource().exists());
+            var guide = service.resolve("gepnic-sasci-integration", auth(role));
+            assertEquals("application/pdf", guide.summary().mediaType());
+            assertTrue(guide.resource().exists());
+            var securityGuide = service.resolve("gepnic-sasci-secured-data-sharing", auth(role));
+            assertEquals("application/pdf", securityGuide.summary().mediaType());
+            assertEquals("gepnic-sasci-secured-data-sharing.pdf", securityGuide.summary().fileName());
+            assertTrue(securityGuide.resource().exists());
+            assertTrue(service.visibleCatalogue(auth(role)).stream()
+                    .anyMatch(doc -> doc.id().equals("gepnic-sasci-secured-data-sharing")));
+        }
+        for (String role : List.of("EXTERNAL", "DATAVIEWER")) {
+            assertThrows(ResponseStatusException.class, () -> service.resolve("rate-policy-configuration-implementation", auth(role)));
+            assertThrows(ResponseStatusException.class, () -> service.resolve("gepnic-sasci-integration", auth(role)));
+            assertThrows(ResponseStatusException.class, () -> service.resolve("gepnic-sasci-secured-data-sharing", auth(role)));
+            assertTrue(service.visibleCatalogue(auth(role)).stream()
+                    .noneMatch(doc -> doc.id().equals("gepnic-sasci-secured-data-sharing")));
+        }
+        assertThrows(ResponseStatusException.class, () -> service.resolve("doors-platform-promo", null));
+        assertThrows(ResponseStatusException.class, () -> service.resolve("gepnic-sasci-secured-data-sharing", null));
     }
 
     @Test

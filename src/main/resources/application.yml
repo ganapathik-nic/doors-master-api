@@ -61,6 +61,9 @@ doors:
     rag-min-score: ${DOORS_AIRA_RAG_MIN_SCORE:0.55}
   documents:
     curl-executable: ${DOORS_CURL_EXECUTABLE:curl}
+    # Windows curl only: VPN downloads can bypass unreachable certificate revocation servers.
+    # Certificate chain and hostname validation still follow the service's verifyTls setting.
+    ssl-no-revoke: ${DOORS_DOCUMENT_SSL_NO_REVOKE:true}
     # nicgep_docs_webservice expects SHA-512(downloadId|docCode|fileName|packetType|secret)#clientId.
     authorization-secret: ${DOORS_DOCUMENT_AUTH_SECRET:SecretKeyForReports}
     authorization-client-id: ${DOORS_DOCUMENT_AUTH_CLIENT_ID:101}

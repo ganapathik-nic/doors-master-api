@@ -47,7 +47,7 @@ public class ApiClientResponseEncryptionService {
             DoorsSigningCertificate activeCert = certRepository.findByIsActiveTrue()
                     .orElseThrow(() -> new IllegalStateException(
                             "Active database signature token registration configuration missing"));
-            PrivateKey signingKey = certificateStorageService.getActiveSigningPrivateKey();
+            PrivateKey signingKey = certificateStorageService.getSigningPrivateKey(activeCert.getKeyId());
             if (signingKey == null) throw new IllegalStateException("Active DOORS signing private key is unavailable");
 
             String plaintext = objectMapper.writeValueAsString(response);
@@ -101,6 +101,23 @@ public class ApiClientResponseEncryptionService {
             }
         }
     }
+
+    public SignedPayload signPayload(Object payload) {
+        try {
+            DoorsSigningCertificate cert = certRepository.findByIsActiveTrue()
+                    .orElseThrow(() -> new IllegalStateException("No active DOORS signing key"));
+            byte[] bytes = objectMapper.writeValueAsBytes(payload);
+            java.security.Signature signer = java.security.Signature.getInstance("SHA256withRSA");
+            signer.initSign(certificateStorageService.getSigningPrivateKey(cert.getKeyId()));
+            signer.update(bytes);
+            return new SignedPayload(Base64.getEncoder().encodeToString(bytes),
+                    Base64.getEncoder().encodeToString(signer.sign()), cert.getKeyId());
+        } catch (Exception error) {
+            throw new EncryptionException("Document signature failed: " + error.getMessage(), error);
+        }
+    }
+
+    public record SignedPayload(String payload, String signature, String keyId) { }
 
     public record EncryptedResponse(Map<String, Object> envelope, String keyId) { }
 }

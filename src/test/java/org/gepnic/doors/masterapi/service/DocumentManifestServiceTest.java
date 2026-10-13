@@ -98,24 +98,148 @@ class DocumentManifestServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> documents = (List<Map<String, Object>>) result.get("documents");
         assertThat(documents).extracting(value -> value.get("serviceDocCode"))
-                .containsExactly("BOQCHART", "BIDPCK", "TECHEVALSUM", "FINEVALSUM", "AOC");
+                .containsExactly("BOQCHART", "BIDPCK", "EVALSUM", "EVALSUM", "AOC");
         assertThat(documents.getFirst()).containsEntry("outputFilePrefix", "2026_NIC_13149_1")
                 .containsEntry("fileName", "boqcomparativechart.xlsx")
                 .containsEntry("downloadId", "33975");
         Map<String, Object> technicalSummary = documents.stream()
-                .filter(value -> "TECHEVALSUM".equals(value.get("serviceDocCode"))).findFirst().orElseThrow();
+                .filter(value -> "Technical".equals(value.get("packetType"))).findFirst().orElseThrow();
         assertThat(technicalSummary).containsEntry("downloadId", "33975")
                 .containsEntry("fileName", "techsummary_33975.pdf")
                 .containsEntry("packetType", "Technical")
                 .containsEntry("sourceDocumentCode", "TECHEVALSUM33975");
         Map<String, Object> financialSummary = documents.stream()
-                .filter(value -> "FINEVALSUM".equals(value.get("serviceDocCode"))).findFirst().orElseThrow();
+                .filter(value -> "EVALSUM".equals(value.get("serviceDocCode"))
+                        && "Finance".equals(value.get("packetType"))).findFirst().orElseThrow();
         assertThat(financialSummary).containsEntry("packetType", "Finance");
         Map<String, Object> aoc = documents.stream()
                 .filter(value -> "AOC".equals(value.get("serviceDocCode"))).findFirst().orElseThrow();
         assertThat(aoc).containsEntry("fileName", "letterofaward.pdf")
                 .containsEntry("packetType", "AOC");
         assertThat(documents).noneMatch(value -> value.get("fileName") == null);
+    }
+
+    @Test
+    void summaryDownloadsAndPreviewsPreserveJsonTypesAndSeparatePacketTypes() {
+        when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
+        when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
+                .thenReturn(Optional.of(registration));
+        var files = List.of(
+                Map.of("t_DOC_TYPE", "BOS", "t_DOC_CODE", "TECHBOS29709", "t_DOC_NAME", "technical_29709.pdf"),
+                Map.of("t_DOC_TYPE", "BOS", "t_DOC_CODE", "FINBOS29709", "t_DOC_NAME", "finance_29709.pdf"),
+                Map.of("t_DOC_TYPE", "EVALSUM", "t_DOC_CODE", "TECHEVALSUM29709", "t_DOC_NAME", "techsummary_29709.pdf"),
+                Map.of("t_DOC_TYPE", "EVALSUM", "t_DOC_CODE", "FINEVALSUM29709", "t_DOC_NAME", "finsummary_29709.pdf"));
+        var summary = Map.of("t_SUMMARY_DOCS", List.of(Map.of("t_SUMMARY_ID", 29709, "t_DOC_DATA", files)));
+        when(reportViewerService.executeDocumentReport(any())).thenReturn(new ReportResult(
+                List.of(Map.of("TENDER_SUMMARY_DOC_DETAILS", summary)),
+                List.of(), Map.of(), Map.of("agent-1", 200), ReportPagination.disabled(1)));
+        when(documentServiceClient.buildDownloadUri(any(), anyString(), anyString(), anyString(), anyString()))
+                .thenCallRealMethod();
+
+        var result = service.discover("AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key", Map.of());
+        @SuppressWarnings("unchecked")
+        var documents = (List<Map<String, Object>>) result.get("documents");
+        assertThat(documents).hasSize(4);
+        assertThat(documents).extracting(doc -> doc.get("packetType"))
+                .containsExactly("Technical", "Finance", "Technical", "Finance");
+        for (var document : documents) {
+            String sourceType = files.get(documents.indexOf(document)).get("t_DOC_TYPE");
+            assertThat(document).containsEntry("documentType", sourceType).containsEntry("serviceDocCode", sourceType);
+            var call = (Map<?, ?>) document.get("documentServiceCall");
+            assertThat(call.get("docCode")).isEqualTo(sourceType);
+            assertThat(call.get("endpoint").toString()).contains("&docCode=" + sourceType + "&");
+            var operation = (Map<?, ?>) document.get("downloadOperation");
+            var body = (Map<?, ?>) operation.get("body");
+            assertThat(body.get("docCode")).isEqualTo(sourceType);
+            assertThat(body.get("packetType")).isEqualTo(document.get("packetType"));
+        }
+        verify(documentServiceClient).buildDownloadUri(registration, "29709", "BOS", "technical_29709.pdf", "Technical");
+        verify(documentServiceClient).buildDownloadUri(registration, "29709", "BOS", "finance_29709.pdf", "Finance");
+        verify(documentServiceClient).buildDownloadUri(registration, "29709", "EVALSUM", "techsummary_29709.pdf", "Technical");
+        verify(documentServiceClient).buildDownloadUri(registration, "29709", "EVALSUM", "finsummary_29709.pdf", "Finance");
+
+        var preview = service.discover("AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key", Map.of(), true);
+        @SuppressWarnings("unchecked")
+        var previewDocuments = (List<Map<String, Object>>) preview.get("documents");
+        assertThat(previewDocuments).hasSize(4);
+        for (int i = 0; i < files.size(); i++) {
+            var call = (Map<?, ?>) previewDocuments.get(i).get("documentServiceCall");
+            assertThat(call.get("docCode")).isEqualTo(files.get(i).get("t_DOC_TYPE"));
+            assertThat(call.get("endpoint")).isEqualTo(
+                    ((Map<?, ?>) documents.get(i).get("documentServiceCall")).get("endpoint"));
+        }
+    }
+
+    @Test
+    void financialDownloadAndPreviewMapBidPacketsAndPreserveLoa() {
+        when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
+        when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
+                .thenReturn(Optional.of(registration));
+        var file = Map.of("t_DOC_TYPE", "BOQ", "t_DOC_CODE", "BOQ68653", "t_DOC_NAME", "BOQ_33169.xls");
+        var agreement = Map.of("t_DOC_TYPE", "EAGREEMENT", "t_DOC_CODE", "EAG569", "t_DOC_NAME", "AutoPdf.pdf");
+        var loa = Map.of("t_DOC_TYPE", "LOA", "t_DOC_CODE", "LOA754", "t_DOC_NAME", "F2.pdf");
+        var details = Map.of("t_BID_DOCS", List.of(Map.of("t_BID_ID", 68653, "t_DOC_DATA", List.of(file, agreement, loa))));
+        when(reportViewerService.executeDocumentReport(any())).thenReturn(new ReportResult(
+                List.of(Map.of("FINANCIAL_BID_DOC_DETAILS", details)), List.of(), Map.of(),
+                Map.of("agent-1", 200), ReportPagination.disabled(1)));
+        when(documentServiceClient.buildDownloadUri(any(), anyString(), anyString(), anyString(), anyString()))
+                .thenCallRealMethod();
+
+        for (boolean preview : List.of(false, true)) {
+            var result = service.discover("AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key", Map.of(), preview);
+            @SuppressWarnings("unchecked")
+            var documents = (List<Map<String, Object>>) result.get("documents");
+            assertThat(documents).hasSize(3);
+            var document = documents.getFirst();
+            assertThat(document).containsEntry("documentType", "BOQ").containsEntry("serviceDocCode", "BIDPCK");
+            var call = (Map<?, ?>) document.get("documentServiceCall");
+            assertThat(call.get("endpoint").toString()).endsWith(
+                    "?downloadId=68653&docCode=BIDPCK&fileName=BOQ_33169.xls&packetType=Finance");
+            var agreementCall = (Map<?, ?>) documents.get(1).get("documentServiceCall");
+            assertThat(agreementCall.get("docCode")).isEqualTo("BIDPCK");
+            var loaCall = (Map<?, ?>) documents.get(2).get("documentServiceCall");
+            assertThat(loaCall.get("docCode")).isEqualTo("LOA");
+            assertThat(loaCall.get("endpoint").toString()).contains("&docCode=LOA&fileName=F2.pdf&");
+            if (!preview) {
+                var operation = (Map<?, ?>) document.get("downloadOperation");
+                assertThat(((Map<?, ?>) operation.get("body")).get("docCode")).isEqualTo("BIDPCK");
+            }
+        }
+    }
+
+    @Test
+    void singleCoverPacketComesFromMatchingBidOpeningStatus() {
+        when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
+        when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
+                .thenReturn(Optional.of(registration));
+        var files = List.of(Map.of("t_DOC_TYPE", "BOQ", "t_DOC_CODE", "BOQ68653", "t_DOC_NAME", "BOQ_33169"));
+        var details = Map.of("t_BID_DOCS", List.of(Map.of("t_BID_ID", 68653, "t_DOC_DATA", files)));
+        when(documentServiceClient.buildDownloadUri(any(), anyString(), anyString(), anyString(), anyString()))
+                .thenCallRealMethod();
+        for (String status : List.of("Admitted-Fee/PreQual/Technical/Finance", "Not Admitted-Fee/PreQual/Technical/Finance",
+                "Admitted-Finance", "Unrecognized")) {
+            var opening = Map.of("FINANCIAL_OPENING_DETAILS", Map.of("BID_DETAILS", List.of(
+                    Map.of("BID_ID", 99999, "STATUS", "Admitted-Technical/Finance"),
+                    Map.of("BID_ID", 68653, "STATUS", status))));
+            when(reportViewerService.executeDocumentReport(any())).thenReturn(new ReportResult(
+                    List.of(Map.of("FINANCIAL_BID_DOC_DETAILS", details, "OPENING_DETAILS", opening)),
+                    List.of(), Map.of(), Map.of("agent-1", 200), ReportPagination.disabled(1)));
+            String expected = status.contains("Fee/") ? "Fee/PreQual/Technical/Finance" : "Finance";
+            for (boolean preview : List.of(false, true)) {
+                var result = service.discover("AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key", Map.of(), preview);
+                @SuppressWarnings("unchecked")
+                var documents = (List<Map<String, Object>>) result.get("documents");
+                var document = documents.getFirst();
+                assertThat(document).containsEntry("serviceDocCode", "BIDPCK").containsEntry("packetType", expected);
+                var call = (Map<?, ?>) document.get("documentServiceCall");
+                assertThat(call.get("endpoint").toString()).endsWith(
+                        "?downloadId=68653&docCode=BIDPCK&fileName=BOQ_33169.xls&packetType=" + expected);
+                if (!preview) {
+                    var operation = (Map<?, ?>) document.get("downloadOperation");
+                    assertThat(((Map<?, ?>) operation.get("body")).get("packetType")).isEqualTo(expected);
+                }
+            }
+        }
     }
 
     @Test

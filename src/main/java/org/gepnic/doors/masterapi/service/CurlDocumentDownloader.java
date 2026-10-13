@@ -28,14 +28,17 @@ public class CurlDocumentDownloader implements DocumentDownloader {
     private final String executable;
     private final String authorizationSecret;
     private final String authorizationClientId;
+    private final boolean sslNoRevoke;
 
     public CurlDocumentDownloader(
             @Value("${doors.documents.curl-executable:curl}") String executable,
             @Value("${doors.documents.authorization-secret:SecretKeyForReports}") String authorizationSecret,
-            @Value("${doors.documents.authorization-client-id:101}") String authorizationClientId) {
+            @Value("${doors.documents.authorization-client-id:101}") String authorizationClientId,
+            @Value("${doors.documents.ssl-no-revoke:true}") boolean sslNoRevoke) {
         this.executable = executable;
         this.authorizationSecret = authorizationSecret;
         this.authorizationClientId = authorizationClientId;
+        this.sslNoRevoke = sslNoRevoke;
     }
 
     @Override
@@ -62,9 +65,7 @@ public class CurlDocumentDownloader implements DocumentDownloader {
                     "--max-time", Integer.toString(readTimeoutSeconds),
                     "--output", bodyFile.toString(),
                     "--write-out", WRITE_OUT));
-            if (Boolean.FALSE.equals(registration.getVerifyTls())) {
-                command.add("--insecure");
-            }
+            addTlsOptions(command, registration);
             command.add(uri.toASCIIString());
 
             String traceId = currentRequestValue("X-DOORS-TRACE", false);
@@ -132,6 +133,17 @@ public class CurlDocumentDownloader implements DocumentDownloader {
             deleteQuietly(bodyFile);
             deleteQuietly(metadataFile);
             deleteQuietly(errorFile);
+        }
+    }
+
+    void addTlsOptions(List<String> command, DocumentServiceRegistration registration) {
+        // Windows Schannel may be unable to reach revocation servers over the VPN.
+        // This option preserves certificate chain and hostname verification.
+        if (sslNoRevoke && System.getProperty("os.name", "").startsWith("Windows")) {
+            command.add("--ssl-no-revoke");
+        }
+        if (Boolean.FALSE.equals(registration.getVerifyTls())) {
+            command.add("--insecure");
         }
     }
 

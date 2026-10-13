@@ -31,13 +31,16 @@ public class SwaggerSessionAuthenticationFilter extends OncePerRequestFilter {
         var existing = SecurityContextHolder.getContext().getAuthentication();
         String path = request.getRequestURI();
         boolean swaggerDocument = path.startsWith("/v3/api-docs") || path.startsWith("/swagger/")
-                || path.startsWith("/swagger-resources/") || path.startsWith("/api/v1/master/gateway/swagger-sessions/contract/");
-        boolean apiSubscriber = existing != null && existing.isAuthenticated() && existing.getAuthorities().stream()
-                .anyMatch(a -> List.of("ApiUser", "APIUSER", "ROLE_APIUSER").contains(a.getAuthority()));
-        if ((existing == null || (apiSubscriber && swaggerDocument)) && swaggerSessionService.isActiveSession(token)) {
+                || path.startsWith("/swagger-resources/")
+                || path.equals("/session/contract") || path.startsWith("/session/contract/")
+                || path.equals("/api/v1/master/gateway/swagger-sessions/contract")
+                || path.startsWith("/api/v1/master/gateway/swagger-sessions/contract/");
+        boolean portalSession = existing != null && existing.isAuthenticated()
+                && !"anonymousUser".equals(existing.getPrincipal());
+        if ((existing == null || (portalSession && swaggerDocument)) && swaggerSessionService.isActiveSession(token)) {
             if (existing != null) {
                 // A portal cookie must not hide a valid, scoped Swagger launch token.
-                // Keep subscriber identity so plane/role checks still apply.
+                // Keep portal identity; manager/plane checks have already run.
                 var authorities = new ArrayList<org.springframework.security.core.GrantedAuthority>(existing.getAuthorities());
                 authorities.add(new SimpleGrantedAuthority("ROLE_SWAGGER_SESSION"));
                 SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(

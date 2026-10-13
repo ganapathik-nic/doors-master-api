@@ -42,7 +42,7 @@
     try {
       var gatewayBase = window.doorsSwaggerGatewayBase || "/api/v1/master/gateway";
       var response = await fetch(
-        gatewayBase + "/swagger-sessions/contract/export", { headers: {
+        gatewayBase + "/swagger-sessions/contract/export", { credentials: "omit", cache: "no-store", headers: {
           Accept: "application/json",
           "X-DOORS-SWAGGER-SESSION": window.doorsSwaggerSessionToken || ""
         } });
@@ -70,6 +70,8 @@
       var gatewayBase = window.doorsSwaggerGatewayBase || "/api/v1/master/gateway";
       var response = await fetch(
         gatewayBase + "/swagger-sessions/contract", {
+        credentials: "omit",
+        cache: "no-store",
         headers: {
           Accept: "application/json",
           "X-DOORS-SWAGGER-SESSION": window.doorsSwaggerSessionToken || ""

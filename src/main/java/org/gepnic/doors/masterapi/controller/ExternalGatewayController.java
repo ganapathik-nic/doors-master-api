@@ -756,7 +756,12 @@ public class ExternalGatewayController {
             payload = rawRequestBody != null ? rawRequestBody : new HashMap<>();
         }
 
-        gatewayProtocol.validateAndClaim(client.getClientId(), uniqueName, protocolVersion, isInboundEncrypted, payload);
+        if (isInboundEncrypted) {
+            gatewayProtocol.validateAndClaim(client.getClientId(), uniqueName, protocolVersion, true, payload);
+        } else {
+            gatewayProtocol.validatePlainRequest(client.getClientId(), uniqueName, protocolVersion,
+                    isEncryptionEnabled, payload);
+        }
 
         // ========================================================================
         // 🚀 4. EXTRACT PARAMETERS & EXECUTE ORCHESTRATION QUERY

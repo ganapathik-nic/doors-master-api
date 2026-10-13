@@ -335,7 +335,7 @@ public class SecurityConfig {
             // 7. JWT FILTER (Primary Auth)
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(managerPlaneFilter, JwtAuthenticationFilter.class)
-            .addFilterAfter(swaggerSessionAuthFilter, JwtAuthenticationFilter.class)
+            .addFilterAfter(swaggerSessionAuthFilter, ManagerPlaneFilter.class)
             
             // 8. API KEY FILTER (Secondary Auth)
             .addFilterAfter((request, response, chain) -> {

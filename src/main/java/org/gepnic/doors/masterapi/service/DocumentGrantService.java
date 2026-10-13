@@ -42,7 +42,7 @@ public class DocumentGrantService {
     }
 
     public void issue(String scope, List<Map<String, Object>> documents, Map<String, Object> manifestParameters) {
-        jdbc.update("DELETE FROM document_access_grants WHERE expires_at < CURRENT_TIMESTAMP");
+        // Grants remain valid until their authorization scope changes; no batch time limit.
         for (var document : documents) {
             String key = key(scope, document.get("downloadId"), document.get("serviceDocCode"),
                     document.get("fileName"), document.get("packetType"));
@@ -54,7 +54,7 @@ public class DocumentGrantService {
                 String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(eligibility);
                 jdbc.update("""
                         INSERT INTO document_access_grants (grant_key, expires_at, eligibility_json)
-                        VALUES (?, CURRENT_TIMESTAMP + INTERVAL '5 minutes', CAST(? AS jsonb))
+                        VALUES (?, 'infinity'::timestamptz, CAST(? AS jsonb))
                         ON CONFLICT (grant_key) DO UPDATE SET expires_at = EXCLUDED.expires_at,
                             eligibility_json = EXCLUDED.eligibility_json
                         """, key, json);

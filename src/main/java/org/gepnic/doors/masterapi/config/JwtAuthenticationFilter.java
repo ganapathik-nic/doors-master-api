@@ -48,7 +48,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String cookieToken = null;
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        if ((authHeader == null || !authHeader.startsWith("Bearer "))
+                && !isPublicSwaggerAsset(request)) {
             cookieToken = readCookie(request, "DOORS_SESSION");
             if (cookieToken != null && !cookieToken.isBlank()) {
                 authHeader = "Bearer " + cookieToken;
@@ -159,6 +160,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 || uri.equals("/api/v1/auth/mfa/verify")
                 || uri.equals("/api/v1/auth/logout")
                 || uri.equals("/api/auth/captcha");
+    }
+
+    // Browser navigation sends the portal cookie even though Swagger has its own
+    // scoped launch/session mechanism. Do not turn public static assets into a
+    // cross-plane interactive login. Explicit Authorization remains validated.
+    private boolean isPublicSwaggerAsset(HttpServletRequest request) {
+        if (!"GET".equals(request.getMethod()) && !"HEAD".equals(request.getMethod())) return false;
+        String path = request.getRequestURI();
+        if (path.startsWith("/swagger/")) path = path.substring("/swagger".length());
+        return Set.of("/doors-swagger.html", "/doors-swagger.css", "/swagger-autofill.js",
+                "/doors-swagger-bootstrap.js", "/doors-swagger-forge.js",
+                "/doors-swagger-template-catalogue.js", "/doors-swagger-crypto.js",
+                "/doors-template-catalogue.js", "/forge-1.3.2.min.js", "/swagger-ui.html").contains(path)
+                || path.startsWith("/swagger-ui/") || path.startsWith("/vendor/")
+                || path.startsWith("/webjars/");
     }
 
     private String readCookie(HttpServletRequest request, String name) {

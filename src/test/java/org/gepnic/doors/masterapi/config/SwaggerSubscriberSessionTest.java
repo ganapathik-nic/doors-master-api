@@ -14,10 +14,13 @@ import static org.mockito.Mockito.*;
 class SwaggerSubscriberSessionTest {
     @AfterEach void clear() { SecurityContextHolder.clearContext(); }
     private boolean request(String path, boolean valid) throws Exception {
+        return request(path, valid, "APIUSER");
+    }
+    private boolean request(String path, boolean valid, String role) throws Exception {
         var service=mock(SwaggerSessionService.class);
         when(service.isActiveSession("scoped-test-session")).thenReturn(valid);
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                "subscriber",null,List.of(new SimpleGrantedAuthority("APIUSER"))));
+                "subscriber",null,List.of(new SimpleGrantedAuthority(role))));
         var request=new MockHttpServletRequest("GET",path);
         request.addHeader(SwaggerSessionAuthenticationFilter.SESSION_HEADER,"scoped-test-session");
         new SwaggerSessionAuthenticationFilter(service).doFilter(request,new MockHttpServletResponse(),new MockFilterChain());
@@ -33,5 +36,13 @@ class SwaggerSubscriberSessionTest {
         assertFalse(request("/v3/api-docs",false));
         assertFalse(request("/api/v1/master/api-subscriptions",true));
         assertFalse(request("/api/v1/reports/execute",true));
+    }
+    @Test void managerLaunchPreservesIdentityAndRequiresScopedToken() throws Exception {
+        for (String role : List.of("DataManager", "ROLE_ADMIN")) {
+            assertTrue(request("/v3/api-docs", true, role));
+            assertTrue(request("/session/contract", true, role));
+            assertFalse(request("/v3/api-docs", false, role));
+            assertFalse(request("/api/v1/admin/users", true, role));
+        }
     }
 }

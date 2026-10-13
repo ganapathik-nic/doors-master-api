@@ -46,6 +46,26 @@ public class GatewayProtocolService {
                 "The secure request is invalid, expired, duplicated or uses an unsupported protocol.", false, Map.of());
     }
 
+    /** API-key authenticated calls for clients configured by the server for Plain output.
+     * These do not claim signature/freshness protection, even when selecting v2.
+     * The response mode must come from the authenticated client, never the request.
+     */
+    public void validatePlainRequest(long clientId, String query, int version,
+                                     boolean aesResponse, Map<String,Object> payload) {
+        requireAllowed(clientId, query, version);
+        if (aesResponse) {
+            throw new DoorsApiException(HttpStatus.BAD_REQUEST, "DOORS-SIGNED-REQUEST-REQUIRED",
+                    "invalid-secure-request", "Signed request required",
+                    "This client uses AES. Submit a signed encrypted request using Swagger or the SDK.",
+                    false, Map.of());
+        }
+        Object declared = payload.get("protocolVersion");
+        if (declared != null && !Integer.valueOf(version).equals(declared)) {
+            throw invalid("DOORS-PROTOCOL-INVALID", HttpStatus.BAD_REQUEST);
+        }
+        markUsed(clientId, query, version);
+    }
+
     // Called ONLY after signature verification. REQUIRES_NEW keeps the claim even if
     // downstream execution fails; duplicates are rejected, never re-executed automatically.
     @Transactional(propagation = Propagation.REQUIRES_NEW)

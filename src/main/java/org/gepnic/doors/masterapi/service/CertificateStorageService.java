@@ -31,8 +31,15 @@ public class CertificateStorageService {
         DoorsSigningCertificate activeCert = certRepository.findByIsActiveTrue()
                 .orElseThrow(() -> new IllegalStateException("💥 CONFIG FAULT: No active signing certificate flagged in database registry!"));
 
-        // Construct path relative to convention base: e.g., ./security/keys/doors-pki-v1.der
-        File privateKeyFile = new File(keysDirectoryPath, activeCert.getKeyId() + ".der");
+        return getSigningPrivateKey(activeCert.getKeyId());
+    }
+
+    public PrivateKey getSigningPrivateKey(String keyId) throws Exception {
+        if (keyId == null || !keyId.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException("Invalid signing key ID");
+        }
+        // Resolve exactly the selected signing identity, including during rotation.
+        File privateKeyFile = new File(keysDirectoryPath, keyId + ".der");
         
         if (!privateKeyFile.exists()) {
             throw new java.io.FileNotFoundException("Missing private key file on disk: " + privateKeyFile.getAbsolutePath());

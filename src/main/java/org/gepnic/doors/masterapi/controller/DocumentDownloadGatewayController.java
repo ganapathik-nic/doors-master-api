@@ -68,10 +68,14 @@ public class DocumentDownloadGatewayController {
             boolean encryptResponse = "AES".equalsIgnoreCase(registration.getPayloadMode())
                     || requireEncryptedResponse;
             if (!encryptResponse) {
+                var signed = responseEncryptionService.signPayload(response);
                 return ResponseEntity.ok()
+                        .header("X-DOORS-KID", signed.keyId())
+                        .header("X-DOORS-Signature", signed.signature())
                         .header("X-Content-Secure", "false")
                         .header("X-DOORS-PAYLOAD-MODE", "PLAIN_TEXT")
-                        .body(response);
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(java.util.Base64.getDecoder().decode(signed.payload()));
             }
             ApiClientResponseEncryptionService.EncryptedResponse encrypted =
                     responseEncryptionService.encrypt(apiKey, response);
@@ -172,6 +176,18 @@ public class DocumentDownloadGatewayController {
                     servletRequest.getRequestURL().toString(), upstreamEndpoint);
             throw error;
         }
+        ApiClientResponseEncryptionService.SignedPayload signedDocument;
+        try {
+            signedDocument = responseEncryptionService.signPayload(Map.of(
+                    "version", 1, "service", serviceName,
+                    "downloadId", String.valueOf(request.get("downloadId")),
+                    "fileName", String.valueOf(request.get("fileName")),
+                    "sha256", document.sha256(), "size", document.contentLength(),
+                    "correlationId", correlationId));
+        } catch (RuntimeException error) {
+            try { document.close(); } catch (Exception cleanup) { error.addSuppressed(cleanup); }
+            throw error;
+        }
         String fileName = String.valueOf(request.get("fileName"));
         ContentDisposition disposition = ContentDisposition.attachment()
                 .filename(fileName, StandardCharsets.UTF_8).build();
@@ -179,6 +195,9 @@ public class DocumentDownloadGatewayController {
                 .contentType(document.contentType())
                 .contentLength(document.contentLength())
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                .header("X-DOORS-Document-Metadata", signedDocument.payload())
+                .header("X-DOORS-Signature", signedDocument.signature())
+                .header("X-DOORS-KID", signedDocument.keyId())
                 .header("X-Correlation-ID", correlationId)
                 .header("X-DOORS-SHA256", document.sha256())
                 .header("X-Content-Secure", "false")

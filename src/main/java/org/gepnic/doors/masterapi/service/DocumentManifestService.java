@@ -110,11 +110,11 @@ public class DocumentManifestService {
             Object financial = value(map, "FINANCIAL_BID_DOC_DETAILS");
             Object summary = value(map, "TENDER_SUMMARY_DOC_DETAILS");
             if (financial instanceof Map<?, ?> details) {
-                normalizeFinancial(details, registration, request, documents, currentTenderId);
+                normalizeFinancial(details, registration, request, documents, currentTenderId, value(map, "OPENING_DETAILS"));
             } else if (value(map, "t_CHART_DETAILS") != null || value(map, "t_BID_DOCS") != null) {
                 // ReportViewerService flattens one level of nested result maps.
                 // Accept that internal representation as well as the original AOC JSON.
-                normalizeFinancial(map, registration, request, documents, currentTenderId);
+                normalizeFinancial(map, registration, request, documents, currentTenderId, value(map, "OPENING_DETAILS"));
             }
             if (summary instanceof Map<?, ?> details) {
                 normalizeTenderSummary(details, registration, request, documents);
@@ -171,7 +171,7 @@ public class DocumentManifestService {
 
     private void normalizeFinancial(Map<?, ?> details, DocumentServiceRegistration registration,
                                     Map<String, Object> request, List<Map<String, Object>> documents,
-                                    String tenderId) {
+                                    String tenderId, Object openingDetails) {
         Object bidDocs = value(details, "t_BID_DOCS");
         String derivedWorkItemRefNo = firstDocumentWorkItemRefNo(bidDocs);
         Object chartDetails = value(details, "t_CHART_DETAILS");
@@ -195,13 +195,36 @@ public class DocumentManifestService {
                     if (!(file instanceof Map<?, ?> fileMap)) continue;
                     String fileName = withDefaultExtension(
                             text(value(fileMap, "t_DOC_NAME")), ".xls");
-                    add(documents, registration, text(value(fileMap, "t_DOC_TYPE")), "BIDPCK", bidId,
+                    String documentType = text(value(fileMap, "t_DOC_TYPE"));
+                    // These source types use the upstream bid-packet download code; LOA remains LOA.
+                    String serviceDocCode = "BOQ".equalsIgnoreCase(documentType)
+                            || "EAGREEMENT".equalsIgnoreCase(documentType) ? "BIDPCK" : documentType;
+                    add(documents, registration, documentType, serviceDocCode, bidId,
                             fileName, bidId,
                             firstNonBlank(text(request.get("workItemRefNo")), trailingNumber(fileName)),
-                            text(value(fileMap, "t_DOC_CODE")), "Finance", null);
+                            text(value(fileMap, "t_DOC_CODE")), financialBidPacketType(openingDetails, bidId), null);
                 }
             }
         }
+    }
+
+    private String financialBidPacketType(Object openingDetails, String bidId) {
+        if (openingDetails instanceof Map<?, ?> opening
+                && value(opening, "FINANCIAL_OPENING_DETAILS") instanceof Map<?, ?> financial
+                && value(financial, "BID_DETAILS") instanceof Collection<?> bids) {
+            for (Object bid : bids) {
+                if (!(bid instanceof Map<?, ?> fields) || bidId == null
+                        || !bidId.equals(text(value(fields, "BID_ID")))) continue;
+                String status = text(value(fields, "STATUS"));
+                if (status != null) {
+                    String packet = status.replaceFirst("^(?:Not )?Admitted-", "");
+                    if (!packet.equals(status) && packet.matches("(?:Fee/)?(?:PreQual/)?(?:Technical/)?Finance")) {
+                        return packet;
+                    }
+                }
+            }
+        }
+        return "Finance";
     }
 
     private void normalizeTenderSummary(Map<?, ?> details, DocumentServiceRegistration registration,
@@ -219,11 +242,12 @@ public class DocumentManifestService {
                 // A blank name describes a summary document that has not been uploaded yet.
                 if (fileName == null) continue;
                 String sourceCode = text(value(fileMap, "t_DOC_CODE"));
-                String serviceDocCode = summaryServiceDocCode(sourceCode, summaryId,
-                        text(value(fileMap, "t_DOC_TYPE")));
-                add(documents, registration, serviceDocCode, serviceDocCode, summaryId, fileName,
+                String documentType = text(value(fileMap, "t_DOC_TYPE"));
+                String summaryCode = summaryServiceDocCode(sourceCode, summaryId, documentType);
+                // The source document type is the download code; TECH/FIN identify only the packet.
+                add(documents, registration, documentType, documentType, summaryId, fileName,
                         null, firstNonBlank(text(request.get("workItemRefNo")), summaryId),
-                        sourceCode, summaryPacketType(serviceDocCode), null);
+                        sourceCode, summaryPacketType(summaryCode), null);
             }
         }
     }

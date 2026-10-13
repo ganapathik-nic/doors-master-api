@@ -66,4 +66,30 @@ class GatewayProtocolServiceTest {
         when(jdbc.queryForList(anyString(),eq(String.class),eq(26L),eq("test"),eq(3))).thenReturn(List.of("UNIMPLEMENTED"));
         assertThatThrownBy(() -> service.requireAllowed(26,"test",3)).isInstanceOf(DoorsApiException.class);
     }
+    @Test void plainV2WorksWithV1DisabledWithoutSignatureOrFreshnessFields() {
+        setup();
+        service.validatePlainRequest(26,"test",2,false,Map.of("protocolVersion",2,"params",Map.of()));
+        assertThatThrownBy(() -> service.validatePlainRequest(26,"test",1,false,Map.of()))
+                .isInstanceOf(DoorsApiException.class);
+        verify(jdbc,never()).update(startsWith("INSERT INTO gateway_request_claim"),anyLong(),any(),any());
+        verify(jdbc).update(startsWith("UPDATE gateway_query_protocol SET last_used_at"),eq(26L),eq("test"),eq(2));
+    }
+    @Test void aesRejectsPlainRequestsForBothVersions() {
+        setup();
+        when(jdbc.queryForList(anyString(),eq(String.class),eq(26L),eq("test"),eq(1))).thenReturn(List.of("LEGACY"));
+        for (int version : new int[]{1,2}) {
+            assertThatThrownBy(() -> service.validatePlainRequest(26,"test",version,true,Map.of("protocolVersion",version)))
+                    .isInstanceOfSatisfying(DoorsApiException.class,e -> assertThat(e.getCode()).isEqualTo("DOORS-SIGNED-REQUEST-REQUIRED"));
+        }
+        verify(jdbc,never()).update(startsWith("UPDATE gateway_query_protocol"),anyLong(),anyString(),anyInt());
+    }
+    @Test void plainRequestsCannotBypassVersionOrQueryPolicy() {
+        setup();
+        assertThatThrownBy(() -> service.validatePlainRequest(26,"other",2,false,Map.of()))
+                .isInstanceOf(DoorsApiException.class);
+        assertThatThrownBy(() -> service.validatePlainRequest(26,"test",99,false,Map.of()))
+                .isInstanceOf(DoorsApiException.class);
+        assertThatThrownBy(() -> service.validatePlainRequest(26,"test",2,false,Map.of("protocolVersion",1)))
+                .isInstanceOf(DoorsApiException.class);
+    }
 }

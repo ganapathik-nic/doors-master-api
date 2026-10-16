@@ -97,7 +97,6 @@ public class ExternalGatewayController {
     @Value("${crypto.keys-directory:./security/keys/}")
     private String keysDirectoryPath;
 
-    private final String jwksExponentE = "AQAB";
 
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
@@ -135,16 +134,14 @@ public class ExternalGatewayController {
             throw new java.io.FileNotFoundException("Public key file matching active reference metadata was missing from disk structure.");
         }
 
-        String pubContent = Files.readString(publicKeyFile.toPath(), StandardCharsets.UTF_8)
-                .replaceAll("-----\\s*BEGIN[^-]*-----", "")
-                .replaceAll("-----\\s*END[^-]*-----", "")
-                .replaceAll("\\s", "");
+        // Uploaded assets contain X.509 certificates; generated assets contain SPKI public keys.
+        PublicKey publicKey = extractPublicKeyFromClientAsset(
+                Files.readString(publicKeyFile.toPath(), StandardCharsets.UTF_8));
+        if (!(publicKey instanceof java.security.interfaces.RSAPublicKey rsaPub)) {
+            throw new IllegalArgumentException("DOORS signing public key must be RSA");
+        }
 
-        byte[] pubBytes = Base64.getDecoder().decode(pubContent);
-        java.security.interfaces.RSAPublicKey rsaPub = (java.security.interfaces.RSAPublicKey) 
-                KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(pubBytes));
-
-        String calculatedModulusN = Base64.getUrlEncoder().withoutPadding().encodeToString(rsaPub.getModulus().toByteArray());
+        String calculatedModulusN = encodeJwkInteger(rsaPub.getModulus());
 
         Map<String, Object> jwkElement = new LinkedHashMap<>();
         jwkElement.put("kty", "RSA");
@@ -152,11 +149,18 @@ public class ExternalGatewayController {
         jwkElement.put("alg", "RS256");
         jwkElement.put("kid", activeCert.getKeyId());
         jwkElement.put("n", calculatedModulusN);
-        jwkElement.put("e", jwksExponentE);
+        jwkElement.put("e", encodeJwkInteger(rsaPub.getPublicExponent()));
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("keys", List.of(jwkElement)));
+    }
+
+    private static String encodeJwkInteger(java.math.BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        // JWK Base64urlUInt excludes BigInteger's leading sign byte.
+        if (bytes.length > 1 && bytes[0] == 0) bytes = Arrays.copyOfRange(bytes, 1, bytes.length);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     @Operation(summary = "Parse Certificate Metadata", description = "Analyzes raw PEM/X.509 certificate strings and extracts organizational identities.")

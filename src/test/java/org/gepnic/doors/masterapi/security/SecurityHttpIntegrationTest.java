@@ -159,6 +159,15 @@ class SecurityHttpIntegrationTest {
         verify(approval).proposeQuery(any(), eq("dev"));
     }
 
+    @Test void inboundRequiresMachineIdentityAndAdminChangesRequireCsrf() throws Exception {
+        mvc.perform(post("/api/v1/inbound/agreements").contentType("application/json").content("{}"))
+            .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/inbound/agreements").with(user("viewer").authorities(new SimpleGrantedAuthority("APIUSER"))))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/admin/inbound-services").with(user("manager").authorities(new SimpleGrantedAuthority("DATAMANAGER"))))
+            .andExpect(status().isForbidden());
+    }
+
     private String validBody() { return "{\"uniqueName\":\"safe_query\",\"sqlText\":\"SELECT 1\"}"; }
 
     @Test void logoutRequiresCsrf() throws Exception {

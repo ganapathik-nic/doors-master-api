@@ -4,6 +4,7 @@ package org.gepnic.doors.masterapi.config;
 public final class MachineApiRoutes {
     private MachineApiRoutes() {}
     public static final String[] PATTERNS = {
+            "/api/v1/inbound/**",
             "/api/v1/master/gateway/handshake", "/api/v1/master/gateway/orchestrate/**",
             "/api/v1/master/gateway/documents/**", "/api/v1/master/gateway/telemetry/**",
             "/api/v1/master/reports/orchestrate/**", "/api/v1/external/execute/**"

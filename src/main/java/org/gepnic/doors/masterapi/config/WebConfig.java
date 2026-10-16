@@ -69,6 +69,7 @@ public class WebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(apiSubscriptionInterceptor).addPathPatterns(MachineApiRoutes.PATTERNS).order(-1);
         registry.addInterceptor(apiKeyInterceptor)
+                .addPathPatterns("/api/v1/inbound/**")
                 .addPathPatterns("/api/v1/master/gateway/handshake")
                 .addPathPatterns("/api/v1/external/**")
                 .addPathPatterns("/api/v1/master/gateway/orchestrate/**")

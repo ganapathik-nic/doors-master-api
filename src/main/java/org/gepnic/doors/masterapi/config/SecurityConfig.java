@@ -46,7 +46,8 @@ public class SecurityConfig {
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList(
                 "Authorization", "Content-Type", "X-API-KEY", "X-DOORS-SWAGGER-SESSION",
-                "X-XSRF-TOKEN", "Accept", "Origin"));
+                "X-XSRF-TOKEN", "Accept", "Origin", "Idempotency-Key", "X-DOORS-Instance-ID",
+                "X-DOORS-Schema-Version", "X-DOORS-Expected-Version", "X-DOORS-Timestamp", "X-DOORS-Signature"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(Arrays.asList("X-API-KEY", "Authorization", "X-Session-Status"));
         
@@ -69,6 +70,7 @@ public class SecurityConfig {
                 .csrfTokenRepository(csrfRepository)
                 .csrfTokenRequestHandler(csrfRequestHandler)
                 .ignoringRequestMatchers(
+                    "/api/v1/inbound/**",
                     "/api/v1/auth/login",
                     "/api/v1/auth/register",
                     "/api/v1/auth/mfa/verify",
@@ -109,6 +111,8 @@ public class SecurityConfig {
                 })
             )
             .authorizeHttpRequests(auth -> auth
+                // Separate inbound machine API; write entitlements are checked by its service.
+                .requestMatchers(HttpMethod.POST, "/api/v1/inbound/**").hasAuthority("ROLE_API_CLIENT")
                 // 1. PUBLIC & OPTIONS Whitelists
                 .requestMatchers("/api/v1/master/gateway/.well-known/jwks.json").permitAll()
                 .requestMatchers("/api/v1/master/gateway/api-clients/parse-certificate").hasAnyAuthority(

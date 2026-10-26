@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.gepnic.doors.masterapi.dto.ApiResponse;
+import org.gepnic.doors.masterapi.aspect.AuditDiagnostics;
 import org.gepnic.doors.masterapi.dto.ReportExecutionRequest;
 import org.gepnic.doors.masterapi.dto.ReportResult;
 import org.gepnic.doors.masterapi.entity.ApiClient;
@@ -63,6 +64,11 @@ import java.security.cert.X509Certificate;
 @RequiredArgsConstructor
 @Tag(name = "DOORS Gateway Execution Console", description = "Interactive API Orchestration Testing Sandbox")
 public class ExternalGatewayController {
+    @org.springframework.transaction.event.TransactionalEventListener(phase = org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void clearWriteClientCredentials(org.gepnic.doors.masterapi.inbound.WriteClientService.CredentialsChanged event) {
+        keyRegistryCache.remove(event.oldApiKey());
+        keyExpiryTracker.remove(event.oldApiKey());
+    }
     @Autowired
     private org.gepnic.doors.masterapi.service.GatewayProtocolService gatewayProtocol;
 
@@ -647,6 +653,10 @@ public class ExternalGatewayController {
         }
 
         String authenticatedClient = client.getClientName();
+        servletRequest.setAttribute(AuditDiagnostics.CLIENT_NAME_ATTRIBUTE, authenticatedClient);
+        servletRequest.setAttribute(AuditDiagnostics.CLIENT_ID_ATTRIBUTE, client.getClientId());
+        servletRequest.setAttribute(AuditDiagnostics.API_KEY_FINGERPRINT_ATTRIBUTE,
+                AuditDiagnostics.apiKeyFingerprint(apiKey));
         executionPolicy.authorize(client, uniqueName);
         boolean isEncryptionEnabled = client.isEncryptionEnabled();
 
@@ -759,6 +769,10 @@ public class ExternalGatewayController {
             // Standard Unencrypted Request Payload
             payload = rawRequestBody != null ? rawRequestBody : new HashMap<>();
         }
+
+        // The audit aspect snapshots arguments before this controller decrypts them.
+        // Bind the verified plaintext payload for useful execution diagnostics.
+        servletRequest.setAttribute(AuditDiagnostics.BODY_ATTRIBUTE, payload);
 
         if (isInboundEncrypted) {
             gatewayProtocol.validateAndClaim(client.getClientId(), uniqueName, protocolVersion, true, payload);

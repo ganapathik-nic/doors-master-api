@@ -50,7 +50,7 @@ public final class InboundProtocol {
         catch(Exception e) { return false; }
     }
     public static void validateEnvelope(Submission s) {
-        if(s==null || s.requestId()==null || s.clientId()<1 || s.expectedVersion()<0
+        if(s==null || s.requestId()==null || s.clientId()<1 || s.expectedVersion()< -1
             || s.expectedVersion()==Long.MAX_VALUE || s.schemaVersion()!=1
             || s.instanceId()==null || !s.instanceId().matches("[A-Za-z0-9_-]{1,80}")
             || s.service()==null || !s.service().matches("[a-z][a-z-]{0,39}")

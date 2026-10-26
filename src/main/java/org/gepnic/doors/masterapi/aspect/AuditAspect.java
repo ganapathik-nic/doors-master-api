@@ -115,7 +115,7 @@ public class AuditAspect {
                 int records = resolveRecordCount(request);
 
                 String clientIp = resolveClientIp(request);
-                String username = resolveUsername();
+                String username = resolveUsername(request);
                 String fullCurl = generateCurl(request, bodyMap);
 
                 Object resolvedAgents = request.getAttribute("X-DOORS-AGENTS");
@@ -234,7 +234,9 @@ public class AuditAspect {
         return request.getRemoteAddr();
     }
 
-    private String resolveUsername() {
+    private String resolveUsername(HttpServletRequest request) {
+        Object clientName = request.getAttribute(AuditDiagnostics.CLIENT_NAME_ATTRIBUTE);
+        if (clientName != null && !clientName.toString().isBlank()) return clientName.toString();
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.isAuthenticated() && !(auth instanceof AnonymousAuthenticationToken)) {
             return auth.getName();
@@ -244,7 +246,21 @@ public class AuditAspect {
 
     private String generateCurl(HttpServletRequest request, Map<String, Object> body) {
         try {
-            StringBuilder curl = new StringBuilder("curl -X ")
+            Object auditBody = request.getAttribute(AuditDiagnostics.BODY_ATTRIBUTE);
+            Object clientName = request.getAttribute(AuditDiagnostics.CLIENT_NAME_ATTRIBUTE);
+            Object clientId = request.getAttribute(AuditDiagnostics.CLIENT_ID_ATTRIBUTE);
+            Object keyFingerprint = request.getAttribute(AuditDiagnostics.API_KEY_FINGERPRINT_ATTRIBUTE);
+
+            StringBuilder curl = new StringBuilder();
+            if (clientName != null) {
+                curl.append("# API client: ").append(clientName)
+                        .append(" (ID: ").append(clientId == null ? "unknown" : clientId).append(")\n");
+            }
+            if (keyFingerprint != null) {
+                curl.append("# API key fingerprint: ").append(keyFingerprint).append("\n");
+            }
+            curl.append("# Request body: decrypted and signature-verified; sensitive payload fields redacted\n")
+                    .append("curl -X ")
                     .append(request.getMethod())
                     .append(" \"")
                     .append(request.getRequestURL())
@@ -252,16 +268,21 @@ public class AuditAspect {
 
             String apiKey = request.getHeader("X-API-KEY");
             if (apiKey != null) {
-                curl.append("  -H \"X-API-KEY: ***REDACTED***\" \\\n");
+                curl.append("  -H \"X-API-KEY: ").append(apiKey).append("\" \\\n");
             }
             curl.append("  -H \"Content-Type: application/json\" \\\n");
 
-            if (body != null && !body.isEmpty()) {
-                Map<String, Object> cleanBody = new HashMap<>(body);
+            Map<String, Object> effectiveBody = body;
+            if (auditBody instanceof Map<?, ?> plaintext) {
+                effectiveBody = objectMapper.convertValue(plaintext, new TypeReference<Map<String, Object>>() {});
+            }
+            if (effectiveBody != null && !effectiveBody.isEmpty()) {
+                Map<String, Object> cleanBody = new HashMap<>(effectiveBody);
                 cleanBody.remove("queryUniqueName");
                 cleanBody.remove("performedBy");
 
-                String jsonBody = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(cleanBody);
+                String jsonBody = objectMapper.writerWithDefaultPrettyPrinter()
+                        .writeValueAsString(AuditDiagnostics.redact(cleanBody));
                 curl.append("  -d '").append(jsonBody).append("'");
             }
 

@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Proposed Agreement payload contract v1. Review required fields, lengths, monetary currency and additionalProperties with the GePNIC team. This example is not yet a full JSON Schema validator integration in DOORS. Enable format assertions in the validator.",
+  "title": "DOORS Agreement payload v1",
+  "type": "object",
+  "properties": {
+    "tender_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "agreement_no": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "agreement_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "party_1": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "vendor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "vendor_id"
+      ],
+      "additionalProperties": false
+    },
+    "party_2": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "user_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "user_name"
+      ],
+      "additionalProperties": false
+    },
+    "tender_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "tender_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "tender_nit_ref_no": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "tender_nit_ref_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "loa_ref_no": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "loa_sign_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "epg_part_1_ref_no": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "epg_part_1_amount": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{2}$",
+      "description": "Non-negative decimal amount represented as text to preserve exact decimal scale; map to PostgreSQL numeric."
+    },
+    "epg_part_1_expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "epg_part_1_claim_expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "epg_part_2_ref_no": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "epg_part_2_amount": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{2}$",
+      "description": "Non-negative decimal amount represented as text to preserve exact decimal scale; map to PostgreSQL numeric."
+    },
+    "epg_part_2_expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "epg_part_2_claim_expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "date_of_completion": {
+      "type": "string",
+      "format": "date"
+    }
+  },
+  "required": [
+    "tender_id",
+    "agreement_no",
+    "agreement_date",
+    "party_1",
+    "party_2"
+  ],
+  "additionalProperties": false
+}

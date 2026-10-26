@@ -1,0 +1,37 @@
+package org.gepnic.doors.masterapi.inbound;
+import java.security.*;
+import java.security.spec.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import javax.crypto.*;
+import javax.crypto.spec.*;
+
+/** Fixed AES envelope; also embedded verbatim (without package/public) in standalone SDKs. */
+public final class WriteCrypto {
+ public static final String MODE="AES-256-GCM";
+ public static final int MAX_WIRE=1500000;
+ public static String sha(byte[] b)throws Exception{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(b));}
+ public static PublicKey publicKey(String pem)throws Exception{return KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(Base64.getMimeDecoder().decode(pem.replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----",""))));}
+ public static String pem(PublicKey key){return "-----BEGIN PUBLIC KEY-----\n"+Base64.getMimeEncoder(64,new byte[]{'\n'}).encodeToString(key.getEncoded())+"\n-----END PUBLIC KEY-----\n";}
+ static Cipher rsa(int mode,Key key)throws Exception{if(!(key instanceof java.security.interfaces.RSAKey r)||r.getModulus().bitLength()<2048)throw new GeneralSecurityException("RSA key too small");var c=Cipher.getInstance("RSA/ECB/OAEPPadding");c.init(mode,key,new OAEPParameterSpec("SHA-256","MGF1",MGF1ParameterSpec.SHA256,PSource.PSpecified.DEFAULT));return c;}
+ public static String seal(byte[] plaintext,PublicKey recipient,String kid)throws Exception{
+  if(plaintext.length>1048576||!kid.matches("[A-Za-z0-9_-]{1,100}"))throw new GeneralSecurityException("Invalid encryption input");
+  byte[] key=new byte[32],iv=new byte[12];var random=new SecureRandom();random.nextBytes(key);random.nextBytes(iv);
+  try{var aes=Cipher.getInstance("AES/GCM/NoPadding");aes.init(Cipher.ENCRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,iv));var b=Base64.getEncoder();return "{\"kid\":\""+kid+"\",\"encryptedKey\":\""+b.encodeToString(rsa(Cipher.ENCRYPT_MODE,recipient).doFinal(key))+"\",\"iv\":\""+b.encodeToString(iv)+"\",\"secureData\":\""+b.encodeToString(aes.doFinal(plaintext))+"\"}";}finally{Arrays.fill(key,(byte)0);}
+ }
+ public static Map<String,String> envelope(String json)throws Exception{
+  if(json.length()>MAX_WIRE)throw new GeneralSecurityException("Oversized encrypted request");
+  var result=new LinkedHashMap<String,String>();String text=json.strip();if(!text.startsWith("{")||!text.endsWith("}"))throw new GeneralSecurityException("Invalid envelope");String[] entries=text.substring(1,text.length()-1).split(",",-1);if(entries.length!=4)throw new GeneralSecurityException("Invalid envelope");
+  var pattern=java.util.regex.Pattern.compile("\\s*\"(kid|encryptedKey|iv|secureData)\"\\s*:\\s*\"([A-Za-z0-9+/=_-]+)\"\\s*");
+  for(String entry:entries){var match=pattern.matcher(entry);if(!match.matches()||result.put(match.group(1),match.group(2))!=null)throw new GeneralSecurityException("Invalid envelope");}
+  if(result.size()!=4||!result.get("kid").matches("[A-Za-z0-9_-]{1,100}"))throw new GeneralSecurityException("Invalid key ID");return result;
+ }
+ public static byte[] open(String json,PrivateKey recipient)throws Exception{
+  var e=envelope(json);var b=Base64.getDecoder();byte[] iv=b.decode(e.get("iv"));if(iv.length!=12)throw new GeneralSecurityException("Invalid IV");byte[] key=rsa(Cipher.DECRYPT_MODE,recipient).doFinal(b.decode(e.get("encryptedKey")));
+  try{if(key.length!=32)throw new GeneralSecurityException("Invalid AES key");var c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,iv));byte[] plain=c.doFinal(b.decode(e.get("secureData")));if(plain.length>1048576)throw new GeneralSecurityException("Oversized plaintext");return plain;}finally{Arrays.fill(key,(byte)0);}
+ }
+ public static String requestText(String service,String instance,String id,int schema,long expected,long timestamp,int contract,String envelope)throws Exception{return "DOORS-INBOUND-AES\n"+service+"\n"+instance+"\n"+id+"\n"+schema+"\n"+expected+"\n"+timestamp+"\n"+contract+"\n"+sha(envelope.getBytes(StandardCharsets.UTF_8));}
+ public static String responseText(String id,int status,String envelope)throws Exception{return "DOORS-INBOUND-AES-RESPONSE\n"+id+"\n"+status+"\n"+sha(envelope.getBytes(StandardCharsets.UTF_8));}
+ public static String sign(String text,PrivateKey key)throws Exception{var s=Signature.getInstance("SHA256withRSA");s.initSign(key);s.update(text.getBytes(StandardCharsets.UTF_8));return Base64.getEncoder().encodeToString(s.sign());}
+ public static void verify(String text,String signature,PublicKey key)throws Exception{var s=Signature.getInstance("SHA256withRSA");s.initVerify(key);s.update(text.getBytes(StandardCharsets.UTF_8));if(!s.verify(Base64.getDecoder().decode(signature)))throw new GeneralSecurityException("Invalid encrypted signature");}
+}

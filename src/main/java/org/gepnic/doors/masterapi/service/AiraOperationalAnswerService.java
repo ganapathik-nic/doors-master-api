@@ -18,11 +18,14 @@ class AiraOperationalAnswerService {
         Map<String, Object> values = domain(snapshot, intent);
         List<Map<String, Object>> metrics = selectMetrics(values, intent);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("answer", format(intent, metrics));
+        String capturedAt = String.valueOf(snapshot.get("capturedAt"));
+        result.put("answer", format(intent, metrics) + "\n\nLive source: governed DOORS operational metrics. Snapshot: "
+                + capturedAt + ".");
         result.put("answerType", "LIVE_OPERATIONAL");
         result.put("metrics", metrics);
         result.put("executionData", metrics);
-        result.put("capturedAt", snapshot.get("capturedAt"));
+        result.put("capturedAt", capturedAt);
+        result.put("sources", metrics.stream().map(metric -> String.valueOf(metric.get("id"))).toList());
         result.put("knowledgeSnippetsMatched", 0);
         result.put("grounded", true);
         result.put("refined", false);

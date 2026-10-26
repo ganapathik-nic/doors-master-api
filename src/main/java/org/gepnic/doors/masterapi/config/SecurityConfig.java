@@ -47,11 +47,16 @@ public class SecurityConfig {
         configuration.setAllowedHeaders(Arrays.asList(
                 "Authorization", "Content-Type", "X-API-KEY", "X-DOORS-SWAGGER-SESSION",
                 "X-XSRF-TOKEN", "Accept", "Origin", "Idempotency-Key", "X-DOORS-Instance-ID",
-                "X-DOORS-Schema-Version", "X-DOORS-Expected-Version", "X-DOORS-Timestamp", "X-DOORS-Signature"));
+                "X-DOORS-Schema-Version", "X-DOORS-Protocol-Version", "X-DOORS-Contract-Version", "X-DOORS-Expected-Version", "X-DOORS-Timestamp", "X-DOORS-Signature"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(Arrays.asList("X-API-KEY", "Authorization", "X-Session-Status"));
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        CorsConfiguration writeConfiguration=new CorsConfiguration(configuration);
+        writeConfiguration.addAllowedHeader("X-DOORS-Encryption");
+        writeConfiguration.addExposedHeader("X-DOORS-Encryption");
+        writeConfiguration.addExposedHeader("X-DOORS-Response-Signature");
+        source.registerCorsConfiguration("/api/v1/inbound/**", writeConfiguration);
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }    
@@ -181,7 +186,7 @@ public class SecurityConfig {
                     "ADMIN", "ROLE_ADMIN"
                 )
 
-                // 🚀 FULL SWAGGER UI & OPENAPI WHITELIST (Covers standard & custom prefixes)
+                // ðŸš€ FULL SWAGGER UI & OPENAPI WHITELIST (Covers standard & custom prefixes)
                 .requestMatchers(
                     "/swagger-ui/**",
                     "/swagger-ui.html",
@@ -282,6 +287,11 @@ public class SecurityConfig {
                         "Developer", "DEVELOPER", "ROLE_DEVELOPER",
                         "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                     )
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/governance/writes/definition", "/api/v1/master/governance/writes/options", "/api/v1/master/governance/writes/mine")
+                    .hasAnyAuthority("Developer", "DEVELOPER", "ROLE_DEVELOPER", "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/master/governance/writes/*/draft-definition").hasAnyAuthority("Developer", "DEVELOPER", "ROLE_DEVELOPER", "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/master/governance/writes/propose", "/api/v1/master/governance/writes/analyse", "/api/v1/master/governance/writes/*/sandbox", "/api/v1/master/governance/writes/*/submit")
+                    .hasAnyAuthority("Developer", "DEVELOPER", "ROLE_DEVELOPER", "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN")
                 .requestMatchers("/api/v1/master/governance/**").hasAnyAuthority(
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )

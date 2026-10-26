@@ -20,6 +20,7 @@ public class WebConfig implements WebMvcConfigurer {
 
     private final ApiKeyInterceptor apiKeyInterceptor;
     private final ApiSubscriptionInterceptor apiSubscriptionInterceptor;
+    private final DoorsSecurityProperties doorsSecurityProperties;
 
     /**
      * WebClient Builder configuration:
@@ -52,6 +53,9 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/v1/inbound/**")
+                .allowedOriginPatterns(doorsSecurityProperties.getAllowedOrigins().toArray(String[]::new))
+                .allowedMethods("POST", "OPTIONS").allowedHeaders("*").allowCredentials(false);
         registry.addMapping("/api/**")
                 .allowedOriginPatterns(
                         "http://localhost:*",

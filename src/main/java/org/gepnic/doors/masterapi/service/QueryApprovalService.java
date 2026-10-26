@@ -76,8 +76,7 @@ public class QueryApprovalService {
         SqlTemplate template = sqlTemplateRepository.findById(queryId)
                 .orElseThrow(() -> new RuntimeException("Query not found with ID: " + queryId));
         
-        if (!"PENDING".equals(template.getStatus())) throw new IllegalStateException("Only pending templates can be approved");
-        if (adminId.equalsIgnoreCase(template.getProposerId())) throw new SecurityException("A different reviewer must approve the proposal");
+        GovernanceReviewRules.requirePendingReviewer(template.getStatus(), template.getProposerId(), adminId);
         if (!org.gepnic.doors.masterapi.util.SqlSecurityValidator.isSafeSelectOnly(template.getSqlText()))
             throw new IllegalArgumentException("Only a single read-only SELECT is permitted");
         template.setStatus("APPROVED");

@@ -1,0 +1,30 @@
+{
+  "tender_id": "1001",
+  "agreement_no": "AGR/2026/001",
+  "agreement_date": "2026-10-12",
+  "party_1": {
+    "name": "ABC Construction Pvt. Ltd.",
+    "type": "Vendor",
+    "vendor_id": "VX3501"
+  },
+  "party_2": {
+    "name": "Executive Engineer, PWD",
+    "type": "DEPARTMENT",
+    "user_name": "Test user"
+  },
+  "tender_name": "Construction of Government Building",
+  "tender_date": "2026-09-15",
+  "tender_nit_ref_no": "PWD/2026/123",
+  "tender_nit_ref_date": "2026-08-20",
+  "loa_ref_no": "LOA/2026/045",
+  "loa_sign_date": "2026-09-25",
+  "epg_part_1_ref_no": "TRPNIC004578",
+  "epg_part_1_amount": "500000.00",
+  "epg_part_1_expiry_date": "2026-12-25",
+  "epg_part_1_claim_expiry_date": "2026-12-25",
+  "epg_part_2_ref_no": "TRPNIC004791",
+  "epg_part_2_amount": "400000.00",
+  "epg_part_2_expiry_date": "2027-03-25",
+  "epg_part_2_claim_expiry_date": "2027-03-25",
+  "date_of_completion": "2027-04-05"
+}

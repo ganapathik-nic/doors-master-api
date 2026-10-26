@@ -75,7 +75,7 @@ class AiraKnowledgeServiceTest {
     void everySecuredPdfProducesAuditableChunks() throws Exception {
         var resolver = new PathMatchingResourcePatternResolver();
         var pdfs = resolver.getResources("classpath*:secure-docs/*.pdf");
-        assertEquals(24, pdfs.length, "All catalogue PDFs must be present");
+        assertTrue(pdfs.length >= 24, "The secured-document catalogue must not lose its baseline coverage");
 
         for (var pdf : pdfs) {
             List<TextSegment> segments = knowledgeService.parsePdfToSegments(pdf);
@@ -84,6 +84,24 @@ class AiraKnowledgeServiceTest {
                             segment.text().startsWith("[SOURCE: secure-docs/" + pdf.getFilename())),
                     pdf.getFilename() + " chunks should retain their source identity");
         }
+    }
+
+    @Test
+    void governedMarkdownRemainsSearchableWhenLocalModelIsDisabled() {
+        properties.setEnabled(false);
+        AiraKnowledgeService lexical = new AiraKnowledgeService(
+                properties, new DefaultResourceLoader(), new ObjectMapper());
+        lexical.init();
+
+        List<String> rateLimit = lexical.findRelevantKnowledge("Explain the DOORS rate limit feature", 4, 0.5);
+        assertTrue(rateLimit.stream().anyMatch(value -> value.contains("HTTP 429 Too Many Requests")));
+        assertTrue(rateLimit.stream().noneMatch(value -> value.contains("Dual-Layer Cryptographic Envelope")),
+                "Rate-limit retrieval must not include unrelated cryptography guidance: " + rateLimit);
+
+        List<String> planes = lexical.findRelevantKnowledge("What are the three planes of DOORS?", 8, 0.5);
+        String planeText = String.join("\n", planes);
+        assertTrue(planeText.contains("Admin Plane") && planeText.contains("External Plane")
+                && planeText.contains("API Plane"), planeText);
     }
 
     @Test

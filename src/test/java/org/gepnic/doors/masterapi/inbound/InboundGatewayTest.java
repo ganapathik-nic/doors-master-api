@@ -12,6 +12,16 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class InboundGatewayTest {
+    @org.junit.jupiter.api.Test
+    void invalidAgentResponsesDoNotExposeResponseContent() throws Exception {
+        assertThatThrownBy(()->InboundGatewayService.parseAgentResponse("<html>secret-response</html>".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("not valid JSON")
+            .hasMessageNotContaining("secret-response");
+        assertThatThrownBy(()->InboundGatewayService.parseAgentResponse(new byte[0]))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("empty");
+        assertThat(InboundGatewayService.parseAgentResponse("{\"code\":\"WRITE_RESULT_UNKNOWN\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8)).path("code").asText())
+            .isEqualTo("WRITE_RESULT_UNKNOWN");
+    }
     String body="{\"tender_id\":\"1001\",\"agreement_no\":\"AGR/2026/001\",\"agreement_date\":\"2026-10-12\"}";
     ApiClient client(){var c=new ApiClient();c.setClientId(1L);c.setIsActive(true);return c;}
     InboundProtocol.Submission request(){return new InboundProtocol.Submission("agreements","tripura",1,UUID.randomUUID(),1,0,Instant.now().getEpochSecond(),body);}
@@ -41,11 +51,15 @@ class InboundGatewayTest {
         assertThatThrownBy(()->service.execute(client(),request(),null)).isInstanceOf(SecurityException.class);
         verifyNoInteractions(a);
     }
-    @Test void unsupportedDatasetNeverFallsBackToAgreement(){
+    @Test void unregisteredDatasetNeverFallsBackToAgreement(){
         var p=new InboundProperties();p.setEnabled(true);var r=mock(InboundRegistry.class);var a=mock(AgentRepository.class);
         var service=new InboundGatewayService(p,r,a,mock(JdbcTemplate.class));var s=request();
         var unsupported=new InboundProtocol.Submission("evaluations",s.instanceId(),1,s.requestId(),1,0,s.timestamp(),body);
-        assertThatThrownBy(()->service.execute(client(),unsupported,null)).hasMessageContaining("WRITE_SERVICE_UNKNOWN");
-        verifyNoInteractions(r,a);
+        // Dynamic services are permitted only through an approved, enabled registry mapping.
+        when(r.require("evaluations",s.instanceId(),1)).thenThrow(new SecurityException("Write service or destination is not authorised"));
+        assertThatThrownBy(()->service.execute(client(),unsupported,null)).isInstanceOf(SecurityException.class).hasMessageContaining("not authorised");
+        verify(r).require("evaluations",s.instanceId(),1);
+        verifyNoMoreInteractions(r);
+        verifyNoInteractions(a);
     }
 }

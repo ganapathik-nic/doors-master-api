@@ -201,6 +201,51 @@ class SecurityHttpIntegrationTest {
                 .andExpect(status().isNoContent());
     }
 
+
+    @Test void writeGovernanceSeparatesProposerReviewerAndMachineRoles() throws Exception {
+        var developer=user("alice").authorities(new SimpleGrantedAuthority("DEVELOPER"));
+        mvc.perform(get("/api/v1/master/governance/writes/mine").with(developer)).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/master/governance/writes/1/review").with(developer).with(csrf()).contentType("application/json").content("{\"approve\":true,\"note\":\"ok\"}")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/master/governance/writes/1/submit").with(developer)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/master/governance/writes/1/submit").with(developer).with(csrf())).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/master/governance/writes/1/submit").with(user("api").authorities(new SimpleGrantedAuthority("ROLE_API_CLIENT"))).with(csrf())).andExpect(status().isForbidden());
+    }
+    @Test void draftEditsRequireProposerRoleAndCsrf() throws Exception {
+        var developer=user("dev").authorities(new SimpleGrantedAuthority("DEVELOPER"));
+        String path="/api/v1/master/governance/writes/1/draft-definition";
+        mvc.perform(put(path).with(developer).contentType("application/json").content("{}")).andExpect(status().isForbidden());
+        mvc.perform(put(path).with(developer).with(csrf()).contentType("application/json").content("{}")).andExpect(status().isOk());
+        mvc.perform(put(path).with(user("api").authorities(new SimpleGrantedAuthority("ROLE_API_CLIENT"))).with(csrf()).contentType("application/json").content("{}")).andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/master/governance/writes/1/review-definition").with(developer).with(csrf()).contentType("application/json").content("{}")).andExpect(status().isForbidden());
+    }
+    @Test void writeApprovalRequiresManagerAndCsrf() throws Exception {
+        var manager=user("reviewer").authorities(new SimpleGrantedAuthority("DATAMANAGER"));
+        String path="/api/v1/master/governance/writes/1/review",body="{\"approve\":true,\"note\":\"reviewed\",\"expectedHash\":\"tested-definition\"}";
+        mvc.perform(post(path).with(manager).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post(path).with(manager).with(csrf()).contentType("application/json").content(body)).andExpect(status().isOk());
+        verify(context.getBean(org.gepnic.doors.masterapi.inbound.WriteGovernanceService.class)).reviewCurrent(1L,"reviewer",true,"reviewed","tested-definition");
+    }
+
+
+    @Test void writeLibraryChangesRequireManagerAndCsrf()throws Exception{
+        var manager=user("library-manager").authorities(new SimpleGrantedAuthority("DATAMANAGER"));
+        var developer=user("developer").authorities(new SimpleGrantedAuthority("DEVELOPER"));
+        String path="/api/v1/master/governance/writes/1/availability";
+        String body=new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(java.util.Map.of("enabled",false));
+        mvc.perform(put(path).with(developer).with(csrf()).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(put(path).with(manager).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(put(path).with(manager).with(csrf()).contentType("application/json").content(body)).andExpect(status().isOk());
+        verify(context.getBean(org.gepnic.doors.masterapi.inbound.WriteGovernanceService.class)).setEnabled(1L,false,"library-manager");
+    }
+    @Test void writeClientManagementRequiresManagerAndCsrf()throws Exception{
+        String path="/api/v1/admin/write-clients";
+        String body="{\"applicationName\":\"Uploader\",\"environment\":\"UAT\",\"description\":\"Test\"}";
+        mvc.perform(post(path).with(user("developer").authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("DEVELOPER"))).with(csrf()).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        var manager=user("manager").authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("DATAMANAGER"));
+        mvc.perform(post(path).with(manager).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post(path).with(manager).with(csrf()).contentType("application/json").content(body)).andExpect(status().isOk());
+        mvc.perform(get(path+"/30/security").with(user("client").authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_API_CLIENT")))).andExpect(status().isForbidden());
+    }
     // Isolates the production filter chain from logout database side effects.
     @org.springframework.web.bind.annotation.RestController
     static class LogoutProbe {
@@ -228,6 +273,12 @@ class SecurityHttpIntegrationTest {
     @Configuration @EnableWebMvc
     @Import({SecurityConfig.class, GlobalExceptionHandler.class})
     static class Config {
+        @Bean org.gepnic.doors.masterapi.inbound.WriteClientService writeClients(){return mock(org.gepnic.doors.masterapi.inbound.WriteClientService.class);}
+        @Bean org.gepnic.doors.masterapi.inbound.WriteClientController writeClientsController(org.gepnic.doors.masterapi.inbound.WriteClientService service){return new org.gepnic.doors.masterapi.inbound.WriteClientController(service);}
+        @Bean org.gepnic.doors.masterapi.inbound.WriteGovernanceService writeService(){return mock(org.gepnic.doors.masterapi.inbound.WriteGovernanceService.class);}
+        @Bean org.gepnic.doors.masterapi.inbound.WriteGovernanceController writeController(org.gepnic.doors.masterapi.inbound.WriteGovernanceService service){
+            return new org.gepnic.doors.masterapi.inbound.WriteGovernanceController(service,mock(org.gepnic.doors.masterapi.inbound.InboundRegistry.class));
+        }
         @Bean ApiSubscriptionService subscriptionService() { return mock(ApiSubscriptionService.class); }
         @Bean ApiSubscriberDashboardService subscriberDashboardService() {
             var service=mock(ApiSubscriberDashboardService.class);

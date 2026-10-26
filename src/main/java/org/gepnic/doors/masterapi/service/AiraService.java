@@ -73,7 +73,6 @@ public class AiraService {
                                 .collect(java.util.stream.Collectors.joining(",")));
                 return result;
             }
-            if (!properties.isEnabled()) throw new IllegalStateException("Aira is not enabled");
             Map<String, Object> liveResult = null;
             List<String> retrievedSnippets = isPasswordPolicyQuestion(sanitizedPrompt)
                     ? knowledgeService.findRelevantKnowledge(passwordPolicyRetrievalQuery(sanitizedPrompt), 12,
@@ -95,6 +94,8 @@ public class AiraService {
             try {
                 if (relevantSnippets.isEmpty()) {
                     answer = "I could not find enough information in the accepted DOORS references to answer that question.";
+                } else if (!properties.isEnabled()) {
+                    answer = buildExtractiveKnowledgeAnswer(relevantSnippets);
                 } else {
                     answer = ollama.chat(sanitizedPrompt, relevantSnippets, responseFocus(sanitizedPrompt));
                     if (isIncompleteAnswer(answer)) {

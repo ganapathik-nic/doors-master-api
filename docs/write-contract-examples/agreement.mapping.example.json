@@ -1,0 +1,130 @@
+{
+  "service": "agreement-data",
+  "businessKey": [
+    "/tender_id",
+    "/agreement_no"
+  ],
+  "fields": [
+    {
+      "path": "/agreement_date",
+      "column": "agreement_date",
+      "type": "date"
+    },
+    {
+      "path": "/agreement_no",
+      "column": "agreement_no",
+      "type": "text"
+    },
+    {
+      "path": "/date_of_completion",
+      "column": "date_of_completion",
+      "type": "date"
+    },
+    {
+      "path": "/epg_part_1_amount",
+      "column": "epg_part_1_amount",
+      "type": "numeric"
+    },
+    {
+      "path": "/epg_part_1_claim_expiry_date",
+      "column": "epg_part_1_claim_expiry_date",
+      "type": "date"
+    },
+    {
+      "path": "/epg_part_1_expiry_date",
+      "column": "epg_part_1_expiry_date",
+      "type": "date"
+    },
+    {
+      "path": "/epg_part_1_ref_no",
+      "column": "epg_part_1_ref_no",
+      "type": "text"
+    },
+    {
+      "path": "/epg_part_2_amount",
+      "column": "epg_part_2_amount",
+      "type": "numeric"
+    },
+    {
+      "path": "/epg_part_2_claim_expiry_date",
+      "column": "epg_part_2_claim_expiry_date",
+      "type": "date"
+    },
+    {
+      "path": "/epg_part_2_expiry_date",
+      "column": "epg_part_2_expiry_date",
+      "type": "date"
+    },
+    {
+      "path": "/epg_part_2_ref_no",
+      "column": "epg_part_2_ref_no",
+      "type": "text"
+    },
+    {
+      "path": "/loa_ref_no",
+      "column": "loa_ref_no",
+      "type": "text"
+    },
+    {
+      "path": "/loa_sign_date",
+      "column": "loa_sign_date",
+      "type": "date"
+    },
+    {
+      "path": "/party_1/name",
+      "column": "party_1_name",
+      "type": "text"
+    },
+    {
+      "path": "/party_1/type",
+      "column": "party_1_type",
+      "type": "text"
+    },
+    {
+      "path": "/party_1/vendor_id",
+      "column": "party_1_vendor_id",
+      "type": "text"
+    },
+    {
+      "path": "/party_2/name",
+      "column": "party_2_name",
+      "type": "text"
+    },
+    {
+      "path": "/party_2/type",
+      "column": "party_2_type",
+      "type": "text"
+    },
+    {
+      "path": "/party_2/user_name",
+      "column": "party_2_user_name",
+      "type": "text"
+    },
+    {
+      "path": "/tender_date",
+      "column": "tender_date",
+      "type": "date"
+    },
+    {
+      "path": "/tender_id",
+      "column": "tender_id",
+      "type": "text"
+    },
+    {
+      "path": "/tender_name",
+      "column": "tender_name",
+      "type": "text"
+    },
+    {
+      "path": "/tender_nit_ref_date",
+      "column": "tender_nit_ref_date",
+      "type": "date"
+    },
+    {
+      "path": "/tender_nit_ref_no",
+      "column": "tender_nit_ref_no",
+      "type": "text"
+    }
+  ],
+  "storageVersion": 2
+}

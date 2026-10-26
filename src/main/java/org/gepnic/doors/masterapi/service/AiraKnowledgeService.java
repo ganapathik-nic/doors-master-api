@@ -32,6 +32,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -43,9 +45,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class AiraKnowledgeService {
 
-    private static final String OPERATIONAL_GUIDE = "classpath:knowledge/doors-operational-guide.md";
+    private static final String KNOWLEDGE_DOCUMENTS = "classpath*:knowledge/*.md";
     private static final String SECURE_DOCUMENTS = "classpath*:secure-docs/*.pdf";
     private static final int PDF_CHUNK_MAX_CHARS = 1800;
+    private static final Set<String> LEXICAL_STOP_WORDS = Set.of(
+            "the", "and", "are", "for", "you", "your", "our", "its", "how", "why", "can", "could",
+            "would", "should", "what", "when", "where", "which", "with", "from", "does", "doors",
+            "explain", "feature", "process", "about", "into", "that", "this", "there", "have", "has",
+            "different", "various", "details", "information");
 
     private final AiraProperties properties;
     private final ResourceLoader resourceLoader;
@@ -56,6 +63,7 @@ public class AiraKnowledgeService {
     private volatile EmbeddingModel embeddingModel;
     private volatile boolean ready = false;
     private volatile int segmentCount = 0;
+    private volatile List<String> lexicalSegments = List.of();
     private final AtomicBoolean indexingInProgress = new AtomicBoolean(false);
 
     public AiraKnowledgeService(AiraProperties properties, ResourceLoader resourceLoader, ObjectMapper objectMapper) {
@@ -67,8 +75,10 @@ public class AiraKnowledgeService {
 
     @PostConstruct
     public void init() {
+        loadLexicalKnowledge();
         if (!properties.isEnabled()) {
-            log.info("AIra is disabled; skipping vector knowledge base initialization.");
+            log.info("AIra model is disabled; {} governed knowledge segments remain available for extractive answers.",
+                    lexicalSegments.size());
             return;
         }
 
@@ -117,7 +127,7 @@ public class AiraKnowledgeService {
 
     public List<String> findRelevantKnowledge(String query, int maxResults, double minScore) {
         if (!properties.isEnabled() || !ready || embeddingStore == null || embeddingModel == null) {
-            return Collections.emptyList();
+            return lexicalSearch(query, maxResults);
         }
 
         try {
@@ -139,7 +149,7 @@ public class AiraKnowledgeService {
             return snippets; // The generation boundary sanitizes after relevance prioritization.
         } catch (Exception e) {
             log.warn("Semantic knowledge retrieval failed: {}", e.getMessage());
-            return Collections.emptyList();
+            return lexicalSearch(query, maxResults);
         }
     }
 
@@ -155,19 +165,8 @@ public class AiraKnowledgeService {
 
         try {
             initEmbeddingModel();
-            Resource resource = resourceLoader.getResource(OPERATIONAL_GUIDE);
-            if (!resource.exists()) {
-                log.error("Knowledge source file not found at {}", OPERATIONAL_GUIDE);
-                return 0;
-            }
-
-            String content;
-            try (InputStream in = resource.getInputStream()) {
-                content = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            }
-
-            List<TextSegment> segments = new ArrayList<>(parseMarkdownToSegments(content));
-            Resource[] pdfResources = new PathMatchingResourcePatternResolver(resourceLoader.getClassLoader())
+            List<TextSegment> segments = loadMarkdownSegments();
+            Resource[] pdfResources = resolver()
                     .getResources(SECURE_DOCUMENTS);
             Arrays.sort(pdfResources, Comparator.comparing(Resource::getFilename,
                     Comparator.nullsLast(String::compareToIgnoreCase)));
@@ -217,6 +216,7 @@ public class AiraKnowledgeService {
 
             this.embeddingStore = newStore;
             this.segmentCount = indexed;
+            this.lexicalSegments = segments.stream().map(TextSegment::text).toList();
             this.ready = true;
 
             log.info("DOORS Vector Knowledge Base successfully indexed {} segments to {}",
@@ -377,10 +377,100 @@ public class AiraKnowledgeService {
     }
 
     public boolean isReady() {
-        return ready && embeddingStore != null;
+        return (ready && embeddingStore != null) || !lexicalSegments.isEmpty();
     }
 
     public int getSegmentCount() {
-        return segmentCount;
+        return segmentCount > 0 ? segmentCount : lexicalSegments.size();
+    }
+
+    private PathMatchingResourcePatternResolver resolver() {
+        return new PathMatchingResourcePatternResolver(resourceLoader.getClassLoader());
+    }
+
+    private List<TextSegment> loadMarkdownSegments() throws Exception {
+        Resource[] resources = resolver().getResources(KNOWLEDGE_DOCUMENTS);
+        Arrays.sort(resources, Comparator.comparing(Resource::getFilename,
+                Comparator.nullsLast(String::compareToIgnoreCase)));
+        if (resources.length == 0) throw new IllegalStateException("No AIra Markdown knowledge found");
+        List<TextSegment> result = new ArrayList<>();
+        for (Resource resource : resources) {
+            String content;
+            try (InputStream in = resource.getInputStream()) {
+                content = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            String source = resource.getFilename() == null ? "unknown.md" : resource.getFilename();
+            for (TextSegment segment : parseMarkdownToSegments(content)) {
+                result.add(TextSegment.from("[SOURCE: knowledge/" + source + "]\n" + segment.text()));
+            }
+        }
+        return result;
+    }
+
+    private void loadLexicalKnowledge() {
+        try {
+            lexicalSegments = loadMarkdownSegments().stream().map(TextSegment::text).toList();
+        } catch (Exception e) {
+            log.warn("Governed Markdown knowledge could not be loaded: {}", e.getMessage());
+            lexicalSegments = List.of();
+        }
+    }
+
+    private List<String> lexicalSearch(String query, int maxResults) {
+        if (query == null || query.isBlank() || lexicalSegments.isEmpty()) return Collections.emptyList();
+        var terms = Arrays.stream(query.toLowerCase(java.util.Locale.ROOT).split("[^a-z0-9]+"))
+                .filter(term -> term.length() > 2)
+                .filter(term -> !LEXICAL_STOP_WORDS.contains(term))
+                .collect(java.util.stream.Collectors.toSet());
+        List<Map.Entry<String, Integer>> ranked = lexicalSegments.stream()
+                .filter(value -> domainCompatible(query, value))
+                .map(value -> Map.entry(value, lexicalScore(value, terms)))
+                .filter(value -> value.getValue() > 0)
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .toList();
+        if (ranked.isEmpty()) return Collections.emptyList();
+        int minimumRelativeScore = Math.max(1, (int) Math.ceil(ranked.get(0).getValue() * 0.60));
+        return ranked.stream()
+                .filter(value -> value.getValue() >= minimumRelativeScore)
+                .limit(Math.max(1, maxResults))
+                .map(Map.Entry::getKey)
+                .toList();
+    }
+
+    private static int lexicalScore(String value, Set<String> terms) {
+        String candidate = value.toLowerCase(java.util.Locale.ROOT);
+        int sourceEnd = candidate.indexOf('\n');
+        int headingStart = sourceEnd >= 0 && candidate.startsWith("[source:") ? sourceEnd + 1 : 0;
+        int headingEnd = candidate.indexOf('\n', headingStart);
+        String heading = headingEnd < 0 ? candidate.substring(headingStart)
+                : candidate.substring(headingStart, headingEnd);
+        String body = headingEnd < 0 ? "" : candidate.substring(headingEnd + 1);
+        int score = 0;
+        for (String term : terms) {
+            if (heading.contains(term)) score += 10;
+            if (body.contains(term)) score += 2;
+            if (body.indexOf(term) != body.lastIndexOf(term)) score += 1;
+        }
+        if (terms.contains("write") && terms.contains("service")
+                && (heading.contains("write service") || heading.contains("write-service"))) score += 24;
+        if ((terms.contains("steps") || terms.contains("creating") || terms.contains("create")
+                || terms.contains("onboarding") || terms.contains("onboard"))
+                && (heading.contains("workflow") || heading.contains("onboarding"))) score += 18;
+        return score;
+    }
+
+    private static boolean domainCompatible(String query, String value) {
+        String request = query.toLowerCase(java.util.Locale.ROOT);
+        String candidate = value.toLowerCase(java.util.Locale.ROOT);
+        int sourceEnd = candidate.indexOf('\n');
+        int headingStart = sourceEnd >= 0 && candidate.startsWith("[source:") ? sourceEnd + 1 : 0;
+        int headingEnd = candidate.indexOf('\n', headingStart);
+        String heading = headingEnd < 0 ? candidate.substring(headingStart)
+                : candidate.substring(headingStart, headingEnd);
+        boolean readQuestion = request.matches(".*\\bread(?:[- ]service)?\\b.*");
+        boolean writeQuestion = request.matches(".*\\bwrite(?:[- ]service)?\\b.*");
+        if (readQuestion && heading.contains("write-service")) return false;
+        if (writeQuestion && (heading.contains("read-service") || heading.contains("read query"))) return false;
+        return true;
     }
 }

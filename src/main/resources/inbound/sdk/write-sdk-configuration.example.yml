@@ -1,0 +1,20 @@
+# Optional Master API settings for finished UAT Write SDK downloads.
+# Use a dedicated TEST identity only, never a server signing key or production client key.
+# Keep both files outside the application JAR and restrict filesystem access.
+# Wallet settings file: DOORS_WALLET_PASS=<test password>, DOORS_WALLET_ALIAS=<private-key alias>
+# A blank alias is allowed only when the P12 contains exactly one private key.
+# UAT downloads include that test identity and password; Production downloads never do.
+# These settings do not change the destination, API key or client public-key registration.
+doors:
+  write-sdk:
+    uat-identity-path: /secure/doors/uat/doors-identity.p12
+    uat-wallet-properties: /secure/doors/uat/doors-wallet.properties
+# For private/local HTTPS, add these to the uat-wallet-properties FILE above:
+# DOORS_TRUSTSTORE_PATH=/secure/doors/uat/https-truststore.p12
+# DOORS_TRUSTSTORE_PASS=<source truststore password>
+# DOORS_TRUSTSTORE_TYPE=PKCS12
+# Relative paths resolve beside that settings file. Blank uses Java default trust.
+# UAT ZIP exports trusted certificate entries only into a portable PKCS12 store;
+# source private-key entries and source truststore password are never exported.
+# Production ZIPs never include this UAT truststore. TLS validation stays enabled.
+# The one-argument command requires an approved automatic-versioning contract.

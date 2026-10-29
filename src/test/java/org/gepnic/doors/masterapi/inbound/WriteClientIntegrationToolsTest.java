@@ -16,6 +16,10 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 class WriteClientIntegrationToolsTest {
  @TempDir Path directory;
+ @Test void releaseSourceNameIdentifiesClientServiceProfileAndContract(){
+  assertThat(WriteSdkRelease.sourceFile(Map.of("client_name","SASCI AOC","title","Agreement Data","contract_version",2),"UAT"))
+   .isEqualTo("WriteClientSASCIAOCAgreementDataUATV2.java");
+ }
  @Test void publicKeyAndIpValidationRejectUnsafeValues()throws Exception{
   assertThat(WriteClientService.validateIps("127.0.0.1, ::1,127.0.0.1")).isEqualTo("127.0.0.1,::1");
   for(String ip:List.of("example.com","127.1","999.2.3.4","127.0.0.1/8","01.2.3.4"))assertThatThrownBy(()->WriteClientService.validateIps(ip)).isInstanceOf(IllegalArgumentException.class);

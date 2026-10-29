@@ -10,11 +10,18 @@ import java.util.zip.*;
 
 /** Finished client releases. Only explicit UAT configuration can supply a test private key. */
 final class WriteSdkRelease {
+ static String sourceFile(Map<String,Object> details,String profile){if(details.get("client_name")==null||String.valueOf(details.get("client_name")).isBlank())return "WriteClient.java";String version=String.valueOf(details.get("contract_version")).replaceAll("[^A-Za-z0-9]","");return "WriteClient"+javaName(details.get("client_name"))+javaName(details.get("title"))+javaName(profile)+"V"+(version.isBlank()?"1":version)+".java";}
+ private static String javaName(Object value){String raw=String.valueOf(value==null?"":value).replaceAll("[^A-Za-z0-9]","");if(raw.isEmpty())return "Service";if(!Character.isJavaIdentifierStart(raw.charAt(0)))raw="V"+raw;return Character.toUpperCase(raw.charAt(0))+raw.substring(1);}
  static byte[] create(byte[] preparation,Map<String,Object> details,String base,String profile,String identityPath,String settingsPath)throws Exception {
   if(!Set.of("UAT","PROD").contains(profile))throw new IllegalArgumentException("Choose UAT or PROD SDK");
   var files=new LinkedHashMap<String,byte[]>();
+  String sourceFile=sourceFile(details,profile);String className=sourceFile.substring(0,sourceFile.length()-5);
   try(var in=new ZipInputStream(new ByteArrayInputStream(preparation),StandardCharsets.UTF_8)){
-   for(ZipEntry e;(e=in.getNextEntry())!=null;)if(Set.of("WriteClient.java","sample.json","openapi.json","doors-wallet.properties").contains(e.getName()))files.put(e.getName(),in.readAllBytes());
+   for(ZipEntry e;(e=in.getNextEntry())!=null;)if(Set.of("WriteClient.java","sample.json","openapi.json","doors-wallet.properties").contains(e.getName())){
+    byte[] contents=in.readAllBytes();
+    if(e.getName().equals("WriteClient.java"))files.put(sourceFile,new String(contents,StandardCharsets.UTF_8).replace("public class WriteClient", "public class "+className).getBytes(StandardCharsets.UTF_8));
+    else files.put(e.getName(),contents);
+   }
   }
   var wallet=new Properties();wallet.load(new StringReader(new String(files.get("doors-wallet.properties"),StandardCharsets.UTF_8)));
   wallet.setProperty("DOORS_SDK_PROFILE",profile);
@@ -50,8 +57,10 @@ final class WriteSdkRelease {
   boolean auto=JsonWriteDefinition.automatic(JsonWriteDefinition.from(details.get("definition_json")));
   String readme=readme(details,profile,auto,bundledTrust);
   files.put("readme-enduser-"+profile.toLowerCase(Locale.ROOT)+".txt",readme.getBytes(StandardCharsets.UTF_8));
+  replaceText(files,"WriteClient.java",sourceFile);replaceText(files,"java WriteClient", "java "+className);
   var output=new ByteArrayOutputStream();try(var zip=new ZipOutputStream(output,StandardCharsets.UTF_8)){for(var e:files.entrySet()){zip.putNextEntry(new ZipEntry(e.getKey()));zip.write(e.getValue());zip.closeEntry();}}return output.toByteArray();
  }
+ private static void replaceText(Map<String,byte[]> files,String from,String to){for(var e:new ArrayList<>(files.entrySet())){if(e.getKey().endsWith(".txt")||e.getKey().endsWith(".html")){files.put(e.getKey(),new String(e.getValue(),StandardCharsets.UTF_8).replace(from,to).getBytes(StandardCharsets.UTF_8));}}}
  private static String readme(Map<String,Object> d,String profile,boolean automatic,boolean trust){
   String command="java WriteClient.java sample.json"+(automatic?"":" 0");
   String text="DOORS WRITE SDK - "+profile+" - Java 21+\n"

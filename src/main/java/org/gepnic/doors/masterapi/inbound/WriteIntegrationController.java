@@ -12,7 +12,7 @@ public class WriteIntegrationController {
  public WriteIntegrationController(WriteIntegrationService service){this.service=service;}
  @GetMapping("/{id}/guide") public Object guide(@PathVariable long id){return service.guide(id);}
  @GetMapping("/{id}/openapi") public Object openapi(@PathVariable long id)throws Exception{return service.openapi(id);}
- @GetMapping("/{id}/sdk") public ResponseEntity<byte[]> sdk(@PathVariable long id,@RequestParam(defaultValue="") String apiBaseUrl,@RequestParam(defaultValue="PROD") String profile)throws Exception{return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("Content-Disposition","attachment; filename=doors-write-"+("UAT".equals(profile)?"uat":"prod")+"-sdk-"+id+".zip").contentType(MediaType.APPLICATION_OCTET_STREAM).body(service.sdk(id,apiBaseUrl,profile));}
+ @GetMapping("/{id}/sdk") public ResponseEntity<byte[]> sdk(@PathVariable long id,@RequestParam(defaultValue="") String apiBaseUrl,@RequestParam(defaultValue="PROD") String profile)throws Exception{return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("Content-Disposition","attachment; filename="+service.sdkDownloadName(id,profile)).contentType(MediaType.APPLICATION_OCTET_STREAM).body(service.sdk(id,apiBaseUrl,profile));}
  public record Scope(boolean enabled){}
  @PostMapping("/{id}/scope-sql") public Object scope(@PathVariable long id,@RequestBody Scope scope){return Map.of("sql",service.scopeSql(id,scope.enabled()));}
  @GetMapping("/{id}/scope-upgrade") public ResponseEntity<String> scopeUpgrade(@PathVariable long id){return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).header("Content-Disposition","attachment; filename=write-scope-upgrade.sql").body(service.scopeUpgrade(id));}

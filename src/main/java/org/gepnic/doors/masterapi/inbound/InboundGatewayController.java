@@ -3,6 +3,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.gepnic.doors.inbound.InboundProtocol;
 import org.gepnic.doors.inbound.JsonWriteDefinition;
 import org.gepnic.doors.masterapi.repository.ApiClientRepository;
+import org.gepnic.doors.masterapi.config.TrustedProxyConfiguration;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -29,7 +30,8 @@ public class InboundGatewayController {
         String protocol=request.getHeader("X-DOORS-Protocol-Version"),contract=request.getHeader("X-DOORS-Contract-Version");
         // Older signed clients omit these headers; their existing mapping remains pinned.
         if(protocol!=null||contract!=null)service.validateVersions(dataset,s.instanceId(),client.getClientId(),protocol==null?null:Integer.valueOf(protocol),contract==null?null:Integer.valueOf(contract));
-        if(!encrypted)return service.execute(client,s,header(request,"X-DOORS-Signature"));
+        String clientIp=TrustedProxyConfiguration.clientIp(request);
+        if(!encrypted)return service.execute(client,s,header(request,"X-DOORS-Signature"),clientIp);
         try {
             long now=java.time.Instant.now().getEpochSecond();if(s.timestamp()<now-300||s.timestamp()>now+60)throw new java.security.GeneralSecurityException();
             if(contract==null||protocol==null||!"1".equals(protocol))throw new java.security.GeneralSecurityException();
@@ -40,7 +42,7 @@ public class InboundGatewayController {
             String kid=WriteCrypto.envelope(payload).get("kid");var serverKey=encryptionKeys.privateKey(kid);
             String plain=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(WriteCrypto.open(payload,serverKey))).toString();
             s=new InboundProtocol.Submission(dataset,s.instanceId(),s.clientId(),s.requestId(),s.schemaVersion(),s.expectedVersion(),s.timestamp(),plain);
-            var result=service.executeEncrypted(client,s);
+            var result=service.executeEncrypted(client,s,clientIp);
             String response=WriteCrypto.seal(InboundProtocol.JSON.writeValueAsBytes(result.getBody()),publicKey,kid);
             return ResponseEntity.status(result.getStatusCode()).header("X-DOORS-Encryption",WriteCrypto.MODE).header("X-DOORS-Response-Signature",WriteCrypto.sign(WriteCrypto.responseText(s.requestId().toString(),result.getStatusCode().value(),response),serverKey)).contentType(MediaType.APPLICATION_JSON).body(response);
         }catch(java.security.GeneralSecurityException e){return ResponseEntity.badRequest().body(Map.of("code","INVALID_ENCRYPTED_REQUEST","message","Encrypted request could not be verified"));}

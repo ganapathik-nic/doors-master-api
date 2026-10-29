@@ -122,6 +122,22 @@ public class SecureDocumentationService {
         add(values, "end-to-end-encryption-process", "End-to-End Encryption and Decryption Process", "Technical", "Machine/API-client request protection, gateway verification, response encryption and Client-side validation.", List.of("RSA", "AES", "Digital signatures"), Set.of(DATAMANAGER, DEVELOPER, APIUSER, SECURITYADMIN), "2.0");
         add(values, "ui-backend-encryption-process", "UI-to-Master API Encryption and Decryption Process", "Technical", "Cookie-authenticated browser response protection using the scoped session cryptographic context.", List.of("HttpOnly session", "AES", "Browser security"), Set.of(DATAMANAGER, DEVELOPER, SECURITYADMIN), "2.0");
         add(values, "aira-architecture-operations", "AIra Architecture and Operations Guide", "Technical", "Local AI architecture, governed prompt routing, PDF and vector storage boundaries, Ollama integration, operational metrics, security and administration.", List.of("AIra", "Vector knowledge base", "PDF storage", "PostgreSQL", "Ollama", "RAG", "Operational metrics"), Set.of(DATAMANAGER, DEVELOPER, SECURITYADMIN), "1.2");
+        add(values, "software-requirements-specification", "DOORS Software Requirements Specification", "System",
+                "Controlled DOORS 1.0.9 requirements baseline covering actors, functional behavior, security, interfaces, constraints and acceptance criteria.",
+                List.of("SRS", "Requirements", "Acceptance criteria", "Security", "Traceability"),
+                Set.of(DATAMANAGER, DEVELOPER, SECURITYADMIN), "1.0.9");
+        add(values, "database-design-document", "DOORS Database Design Document", "System",
+                "Controlled DOORS 1.0.9 logical and physical database design covering schemas, ownership, grants, migrations, governed read and write persistence, and verification.",
+                List.of("Database", "PostgreSQL", "Schemas", "Roles", "Grants", "Migrations"),
+                MANAGERS, "1.0.9");
+        add(values, "functional-user-administrator-manual", "DOORS Complete Functional User and Administrator Manual", "System",
+                "Controlled DOORS 1.0.9 operating manual for authenticated user roles, governance, administration, reporting, integration and support workflows.",
+                List.of("User manual", "Administration", "Governance", "Reports", "Operations"),
+                ALL, "1.0.9");
+        add(values, "software-design-description", "DOORS Software Design Description", "System",
+                "Final-review DOORS 1.0.9 software design baseline covering architecture, request planes, UI wireframes, approval swimlanes, encryption flows, operations, decisions, risks and acceptance gates.",
+                List.of("SDD", "Architecture", "Wireframes", "Swimlanes", "Encryption", "Design decisions"),
+                Set.of(DATAMANAGER, DEVELOPER, SECURITYADMIN), "1.0.9 Final Review 1.3");
         add(values, "platform-reference", "Legacy DOORS Platform Reference Manual", "Legacy", "Original June 2026 consolidated handoff retained for historical reference.", List.of("Architecture", "Operations", "Deployment"), Set.of(DATAMANAGER));
         return Map.copyOf(values);
     }

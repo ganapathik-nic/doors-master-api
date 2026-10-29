@@ -17,7 +17,7 @@ class SecureDocumentationServiceTest {
     @Test
     void dataManagerReceivesCompleteCatalogue() {
         var documents = service.visibleCatalogue(auth("DATAMANAGER"));
-        assertEquals(28, documents.size());
+        assertEquals(32, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("hosting-deployment-operations")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-process-flow-flyer")));
         assertTrue(service.resolve("doors-process-flow-flyer", auth("DATAMANAGER")).resource().exists());
@@ -26,15 +26,26 @@ class SecureDocumentationServiceTest {
         assertTrue(service.resolve("aira-architecture-operations", auth("DATAMANAGER")).resource().exists());
         assertTrue(service.resolve("password-policy-mfa", auth("DATAMANAGER")).resource().exists());
         assertTrue(service.resolve("api-data-sharing-visual-manual", auth("DATAMANAGER")).resource().exists());
+        assertTrue(service.resolve("software-requirements-specification", auth("DATAMANAGER")).resource().exists());
+        assertTrue(service.resolve("database-design-document", auth("DATAMANAGER")).resource().exists());
+        assertTrue(service.resolve("functional-user-administrator-manual", auth("DATAMANAGER")).resource().exists());
+        assertTrue(service.resolve("software-design-description", auth("DATAMANAGER")).resource().exists());
+        for (String id : List.of("software-requirements-specification", "database-design-document",
+                "functional-user-administrator-manual", "software-design-description")) {
+            assertTrue(documents.stream().anyMatch(value -> value.id().equals(id) && value.category().equals("System")));
+        }
     }
 
     @Test
     void externalUserReceivesOnlySharedAndRoleManuals() {
         var documents = service.visibleCatalogue(auth("ROLE_EXTERNAL"));
-        assertEquals(8, documents.size());
+        assertEquals(9, documents.size());
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("external-user-manual")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("doors-rbac-security-flyer")));
         assertTrue(documents.stream().anyMatch(value -> value.id().equals("password-policy-mfa")));
+        assertTrue(documents.stream().anyMatch(value -> value.id().equals("functional-user-administrator-manual")));
+        assertThrows(ResponseStatusException.class,
+                () -> service.resolve("software-design-description", auth("EXTERNAL")));
     }
 
     @Test

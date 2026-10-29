@@ -26,10 +26,14 @@ public class InboundGatewayService {
     public InboundGatewayService(InboundProperties p,InboundRegistry r,AgentRepository a,JdbcTemplate db){properties=p;registry=r;agents=a;this.db=db;}
     public void validateVersions(String service,String instance,long client,Integer protocol,Integer contract){registry.validateVersions(registry.require(service,instance,client),protocol,contract);}
     public ResponseEntity<?> execute(ApiClient client,InboundProtocol.Submission s,String signature) throws Exception {
-        return executeInternal(client,s,signature,false);
+        return execute(client,s,signature,null);
     }
-    ResponseEntity<?> executeEncrypted(ApiClient client,InboundProtocol.Submission s)throws Exception{return executeInternal(client,s,null,true);}
-    private ResponseEntity<?> executeInternal(ApiClient client,InboundProtocol.Submission s,String signature,boolean authenticated)throws Exception {
+    public ResponseEntity<?> execute(ApiClient client,InboundProtocol.Submission s,String signature,String clientIp) throws Exception {
+        return executeInternal(client,s,signature,false,clientIp);
+    }
+    ResponseEntity<?> executeEncrypted(ApiClient client,InboundProtocol.Submission s)throws Exception{return executeEncrypted(client,s,null);}
+    ResponseEntity<?> executeEncrypted(ApiClient client,InboundProtocol.Submission s,String clientIp)throws Exception{return executeInternal(client,s,null,true,clientIp);}
+    private ResponseEntity<?> executeInternal(ApiClient client,InboundProtocol.Submission s,String signature,boolean authenticated,String clientIp)throws Exception {
         if(!properties.isEnabled())throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"WRITE_DISABLED");
         InboundProtocol.validateEnvelope(s);
 
@@ -82,8 +86,8 @@ public class InboundGatewayService {
             return ResponseEntity.status(504).body(Map.of("code",outcome,"requestId",s.requestId(),"message","Result unknown. Retry the same request ID and payload."));
         } finally {
             slots.release();
-            try {db.update("INSERT INTO inbound_write_audit(request_id,client_id,service_code,instance_id,agent_id,outcome,http_status,payload_sha256) VALUES(?,?,?,?,?,?,?,?)",
-                s.requestId(),s.clientId(),s.service(),s.instanceId(),route.agent(),outcome,status,InboundProtocol.sha(s.payload().getBytes(StandardCharsets.UTF_8)));}
+            try {db.update("INSERT INTO inbound_write_audit(request_id,client_id,service_code,instance_id,agent_id,outcome,http_status,payload_sha256,client_ip) VALUES(?,?,?,?,?,?,?,?,?)",
+                s.requestId(),s.clientId(),s.service(),s.instanceId(),route.agent(),outcome,status,InboundProtocol.sha(s.payload().getBytes(StandardCharsets.UTF_8)),clientIp);}
             catch(Exception e){LoggerFactory.getLogger(getClass()).error("Inbound audit unavailable for request {}",s.requestId());}
         }
     }

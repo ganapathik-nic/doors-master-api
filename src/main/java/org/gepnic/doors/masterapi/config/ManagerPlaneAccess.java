@@ -1,6 +1,7 @@
 package org.gepnic.doors.masterapi.config;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -13,15 +14,24 @@ public class ManagerPlaneAccess {
 
     private final boolean enforced;
     private final String expectedToken;
+    private final boolean developmentBypassUserIpWhitelist;
 
+    @Autowired
     public ManagerPlaneAccess(
             @Value("${doors.security.manager-plane-enforced:false}") boolean enforced,
-            @Value("${doors.security.manager-plane-token:}") String expectedToken) {
+            @Value("${doors.security.manager-plane-token:}") String expectedToken,
+            @Value("${doors.security.development-bypass-user-ip-whitelist:false}") boolean developmentBypassUserIpWhitelist) {
         this.enforced = enforced;
         this.expectedToken = expectedToken;
+        this.developmentBypassUserIpWhitelist = developmentBypassUserIpWhitelist;
         if (enforced && expectedToken.length() < 24) {
             throw new IllegalStateException("Manager-plane token must contain at least 24 characters");
         }
+    }
+
+    /** Retains the concise constructor used by focused policy tests. */
+    public ManagerPlaneAccess(boolean enforced, String expectedToken) {
+        this(enforced, expectedToken, false);
     }
 
     public boolean isAllowed(HttpServletRequest request) {
@@ -35,6 +45,9 @@ public class ManagerPlaneAccess {
     public boolean isVpnIpAllowed(HttpServletRequest request, String configuredIpOrCidr) {
         // IP allowlisting is an optional per-user control and is independent of
         // manager-plane token enforcement. An empty allowlist means unrestricted.
+        // This is enabled only by application-dev.yml for a same-machine portal
+        // run, where the local reverse-proxy chain does not preserve the VPN IP.
+        if (developmentBypassUserIpWhitelist) return true;
         if (configuredIpOrCidr == null || configuredIpOrCidr.isBlank()) return true;
         String clientIp = TrustedProxyConfiguration.clientIp(request);
         return java.util.Arrays.stream(configuredIpOrCidr.split("[,;\\r\\n]+"))

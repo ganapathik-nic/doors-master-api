@@ -48,7 +48,13 @@ public class RegisteredDocumentServiceClient {
             String docCode,
             String fileName,
             String packetType) {
-        return UriComponentsBuilder.fromHttpUrl(registration.getBaseUrl() + registration.getDownloadPath())
+        String baseUrl = registration.getBaseUrl().replaceAll("/+$", "");
+        String downloadPath = registration.getDownloadPath();
+        String normalizedPath = downloadPath == null || downloadPath.isBlank()
+                ? "" : (downloadPath.startsWith("/") ? downloadPath : "/" + downloadPath);
+        String endpoint = normalizedPath.isEmpty() || baseUrl.endsWith(normalizedPath)
+                ? baseUrl : baseUrl + normalizedPath;
+        return UriComponentsBuilder.fromHttpUrl(endpoint)
                 .queryParam("downloadId", downloadId)
                 .queryParam("docCode", docCode)
                 .queryParam("fileName", fileName)

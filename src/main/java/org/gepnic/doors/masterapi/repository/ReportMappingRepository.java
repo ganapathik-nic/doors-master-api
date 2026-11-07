@@ -16,7 +16,7 @@ public interface ReportMappingRepository extends JpaRepository<SqlTemplate, Long
      * 1. TEMPLATE LIST: Finds templates where at least one authorized agent 
      * matches an agent authorized for the user.
      */
-    @Query(value = "SELECT DISTINCT t.query_id, t.unique_name, t.parameters " +
+    @Query(value = "SELECT DISTINCT t.query_id, t.unique_name, t.parameters, t.sql_text " +
                    "FROM sql_templates t " +
                    "JOIN sql_template_authorized_agents staa ON t.query_id = staa.query_id " +
                    "JOIN user_authorized_agents uaa ON staa.agent_id = uaa.agent_id " +

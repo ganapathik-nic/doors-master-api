@@ -208,6 +208,71 @@ class DocumentManifestServiceTest {
     }
 
     @Test
+    void technicalOpeningPayloadCreatesDownloadForEveryBidDocument() {
+        when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
+        when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
+                .thenReturn(Optional.of(registration));
+        var firstFiles = List.of(
+                Map.of("t_DOC_TYPE", "BIDPCK", "t_DOC_CODE", "BIDPCK17794434", "t_DOC_NAME", "catalogue.pdf"),
+                Map.of("t_DOC_TYPE", "BIDPCK", "t_DOC_CODE", "BIDPCK17794435", "t_DOC_NAME", "agreement.pdf"));
+        var secondFiles = List.of(
+                Map.of("t_DOC_TYPE", "BIDPCK", "t_DOC_CODE", "BIDPCK17822316", "t_DOC_NAME", "tenderform.pdf"));
+        var payload = Map.of("TENDER", List.of(Map.of(
+                "TENDER_ID", "2026_DTE_850164_3",
+                "Bid_Info", List.of(
+                        Map.of("BID_ID", 2614231, "DOC_INFO", firstFiles),
+                        Map.of("BID_ID", 2616244, "DOC_INFO", secondFiles)))));
+        when(reportViewerService.executeDocumentReport(any())).thenReturn(new ReportResult(
+                List.of(Map.of("type", "json", "value", payload)), List.of(), Map.of(),
+                Map.of("agent-1", 200), ReportPagination.disabled(1)));
+        when(documentServiceClient.buildDownloadUri(any(), anyString(), anyString(), anyString(), anyString()))
+                .thenCallRealMethod();
+
+        var result = service.discover("AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key",
+                Map.of("p_tenderid", "2026_DTE_850164_3"));
+        @SuppressWarnings("unchecked")
+        var documents = (List<Map<String, Object>>) result.get("documents");
+
+        assertThat(documents).hasSize(3);
+        assertThat(documents).extracting(document -> document.get("downloadId"))
+                .containsExactly("2614231", "2614231", "2616244");
+        assertThat(documents).allSatisfy(document -> {
+            assertThat(document).containsEntry("serviceDocCode", "BIDPCK")
+                    .containsEntry("packetType", "Fee/PreQual/Technical")
+                    .containsEntry("workItemRefNo", "2026_DTE_850164_3")
+                    .containsKey("downloadOperation");
+        });
+        assertThat(documents.getFirst()).containsEntry("sourceDocumentCode", "BIDPCK17794434")
+                .containsEntry("outputFilePrefix", "2614231");
+    }
+
+    @Test
+    void technicalOpeningUsesPacketTypeReturnedByQuery() {
+        when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
+        when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))
+                .thenReturn(Optional.of(registration));
+        var payload = Map.of("TENDER", List.of(Map.of(
+                "TENDER_ID", "2026_DTE_850164_3",
+                "OPENING_TYPE", "PreQual/Technical",
+                "Bid_Info", List.of(Map.of(
+                        "BID_ID", 2614231,
+                        "DOC_INFO", List.of(Map.of(
+                                "t_DOC_TYPE", "BIDPCK", "t_DOC_CODE", "BIDPCK17794434",
+                                "t_DOC_NAME", "catalogue.pdf")))))));
+        when(reportViewerService.executeDocumentReport(any())).thenReturn(new ReportResult(
+                List.of(Map.of("type", "json", "value", payload)), List.of(), Map.of(),
+                Map.of("agent-1", 200), ReportPagination.disabled(1)));
+        when(documentServiceClient.buildDownloadUri(any(), anyString(), anyString(), anyString(), anyString()))
+                .thenCallRealMethod();
+
+        var result = service.discover("AOC_DOCUMENTS", "AOC_BY_TENDERID", "api-key", Map.of());
+        @SuppressWarnings("unchecked")
+        var documents = (List<Map<String, Object>>) result.get("documents");
+        assertThat(documents).singleElement().satisfies(document ->
+                assertThat(document).containsEntry("packetType", "PreQual/Technical"));
+    }
+
+    @Test
     void singleCoverPacketComesFromMatchingBidOpeningStatus() {
         when(clientRepository.findByApiKey("api-key")).thenReturn(Optional.of(client("sdk-client")));
         when(registrationRepository.findByServiceNameIgnoreCase("AOC_DOCUMENTS"))

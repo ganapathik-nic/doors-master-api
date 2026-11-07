@@ -10,7 +10,7 @@ import java.util.zip.*;
 
 /** Finished client releases. Only explicit UAT configuration can supply a test private key. */
 final class WriteSdkRelease {
- static String sourceFile(Map<String,Object> details,String profile){if(details.get("client_name")==null||String.valueOf(details.get("client_name")).isBlank())return "WriteClient.java";String version=String.valueOf(details.get("contract_version")).replaceAll("[^A-Za-z0-9]","");return "WriteClient"+javaName(details.get("client_name"))+javaName(details.get("title"))+javaName(profile)+"V"+(version.isBlank()?"1":version)+".java";}
+ static String sourceFile(Map<String,Object> details,String profile){if(details.get("client_name")==null||String.valueOf(details.get("client_name")).isBlank())return "WriteClient.java";return "WriteClient"+javaName(details.get("client_name"))+".java";}
  private static String javaName(Object value){String raw=String.valueOf(value==null?"":value).replaceAll("[^A-Za-z0-9]","");if(raw.isEmpty())return "Service";if(!Character.isJavaIdentifierStart(raw.charAt(0)))raw="V"+raw;return Character.toUpperCase(raw.charAt(0))+raw.substring(1);}
  static byte[] create(byte[] preparation,Map<String,Object> details,String base,String profile,String identityPath,String settingsPath)throws Exception {
   if(!Set.of("UAT","PROD").contains(profile))throw new IllegalArgumentException("Choose UAT or PROD SDK");

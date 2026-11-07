@@ -158,6 +158,27 @@ class SecurityRegressionTest {
         verify(reports).executeReport(argThat(r -> "actual".equals(r.getPerformedBy())));
     }
 
+    @Test void reportControllerPreservesExecutionFailureForGlobalProblemHandling() {
+        var reports = mock(ReportViewerService.class);
+        var controller = new org.gepnic.doors.masterapi.controller.ReportViewerController(
+                reports, mock(org.gepnic.doors.masterapi.service.ReportExportService.class));
+        var failure = new org.gepnic.doors.masterapi.exception.DoorsApiException(
+                org.springframework.http.HttpStatus.BAD_GATEWAY,
+                "DOORS-AGENT-EXECUTION-FAILED",
+                "agent-execution-failed",
+                "Agent execution failed",
+                "GePNIC-Staging-2: database function is unavailable",
+                false,
+                Map.of("failedAgents", List.of("GePNIC-Staging-2")));
+        when(reports.executeReport(any())).thenThrow(failure);
+
+        assertThatThrownBy(() -> controller.executeReport(
+                new org.gepnic.doors.masterapi.dto.ReportExecutionRequest(),
+                mock(jakarta.servlet.http.HttpServletRequest.class),
+                () -> "data-viewer"))
+                .isSameAs(failure);
+    }
+
     @Test void documentGrantBindsAllCoordinatesAndClientScope() {
         var jdbc = mock(JdbcTemplate.class);
         var grants = new DocumentGrantService(jdbc, mock(SqlTemplateRepository.class), mock(AgentRepository.class),
@@ -226,10 +247,15 @@ class SecurityRegressionTest {
                 mock(MappingService.class), mock(AgentExecutionService.class), mock(DataPullRequestRepository.class),
                 mock(ClientQueryMapRepository.class), mock(AgentRepository.class), mock(DataRequestAccess.class));
 
-        var response = controller.approveAndMap(69L, Map.of("status", "REJECTED"), auth("reviewer", "DATAMANAGER"));
+        var response = controller.approveAndMap(69L,
+                Map.of("status", "REJECTED", "note", "SQL does not meet the approved requirement"),
+                auth("reviewer", "DATAMANAGER"));
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(legacy.getStatus()).isEqualTo("REJECTED");
         assertThat(legacy.getAuthorizedAgents()).isEmpty();
+        assertThat(legacy.getGovernanceNote()).isEqualTo("SQL does not meet the approved requirement");
+        assertThat(legacy.getApproverId()).isEqualTo("reviewer");
+        assertThatCode(() -> legacy.getAuthorizedAgents().add("future-agent")).doesNotThrowAnyException();
         verify(templates).save(legacy);
     }
 
@@ -249,6 +275,56 @@ class SecurityRegressionTest {
         assertThat(response.getStatusCode().value()).isEqualTo(403);
         assertThat(legacy.getStatus()).isEqualTo("PENDING");
         verify(templates, never()).save(any());
+    }
+
+    @Test void previouslyApprovedDisabledQueryCanBeReEnabled() {
+        var templates = mock(SqlTemplateRepository.class);
+        var disabled = new SqlTemplate();
+        disabled.setQueryId(70L);
+        disabled.setStatus("DISABLED");
+        disabled.setProposerId("original-proposer");
+        disabled.setSqlText("SELECT id FROM approved_report_source");
+        when(templates.findById(70L)).thenReturn(Optional.of(disabled));
+        when(templates.save(disabled)).thenReturn(disabled);
+        var controller = new TemplateController(mock(JdbcTemplate.class), mock(TemplateService.class), templates,
+                mock(MappingService.class), mock(AgentExecutionService.class), mock(DataPullRequestRepository.class),
+                mock(ClientQueryMapRepository.class), mock(AgentRepository.class), mock(DataRequestAccess.class));
+
+        var response = controller.approveAndMap(70L, Map.of("status", "APPROVED"),
+                auth("manager", "DATAMANAGER"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(disabled.getStatus()).isEqualTo("APPROVED");
+        assertThat(disabled.getApproverId()).isEqualTo("manager");
+        verify(templates).save(disabled);
+    }
+
+    @Test void editedPendingSqlReturnsForIndependentReviewWithJustification() {
+        var templates = mock(SqlTemplateRepository.class);
+        var pending = new SqlTemplate();
+        pending.setQueryId(71L);
+        pending.setStatus("PENDING");
+        pending.setProposerId("original-proposer");
+        pending.setSqlText("SELECT id FROM approved_report_source");
+        when(templates.findById(71L)).thenReturn(Optional.of(pending));
+        when(templates.save(pending)).thenReturn(pending);
+        var controller = new TemplateController(mock(JdbcTemplate.class), mock(TemplateService.class), templates,
+                mock(MappingService.class), mock(AgentExecutionService.class), mock(DataPullRequestRepository.class),
+                mock(ClientQueryMapRepository.class), mock(AgentRepository.class), mock(DataRequestAccess.class));
+
+        var response = controller.approveAndMap(71L, Map.of(
+                "status", "PENDING",
+                "sqlText", "SELECT id, name FROM approved_report_source",
+                "note", "Added the approved organisation name to the report"),
+                auth("reviewer-editor", "DATAMANAGER"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(pending.getStatus()).isEqualTo("PENDING");
+        assertThat(pending.getSqlText()).isEqualTo("SELECT id, name FROM approved_report_source");
+        assertThat(pending.getGovernanceNote()).isEqualTo("Added the approved organisation name to the report");
+        assertThat(pending.getProposerId()).isEqualTo("reviewer-editor");
+        assertThat(pending.getApproverId()).isNull();
+        verify(templates).save(pending);
     }
 
     @Test void developerCannotReadUnapprovedEvidence() {

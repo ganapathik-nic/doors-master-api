@@ -18,7 +18,7 @@ class WriteClientIntegrationToolsTest {
  @TempDir Path directory;
  @Test void releaseSourceNameIdentifiesClientServiceProfileAndContract(){
   assertThat(WriteSdkRelease.sourceFile(Map.of("client_name","SASCI AOC","title","Agreement Data","contract_version",2),"UAT"))
-   .isEqualTo("WriteClientSASCIAOCAgreementDataUATV2.java");
+   .isEqualTo("WriteClientSASCIAOC.java");
  }
  @Test void publicKeyAndIpValidationRejectUnsafeValues()throws Exception{
   assertThat(WriteClientService.validateIps("127.0.0.1, ::1,127.0.0.1")).isEqualTo("127.0.0.1,::1");

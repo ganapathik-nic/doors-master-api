@@ -67,6 +67,11 @@ public class ReportViewerService {
             } catch (Exception e) {
                 log.error("DOORS-MASTER: Param parsing failed", e);
             }
+            // Derive from the approved SQL so legacy/stale parameter arrays cannot
+            // make the report form send the wrong keys.
+            if (row.length > 3 && row[3] != null) {
+                paramsList = org.gepnic.doors.masterapi.util.SqlInputParameterExtractor.extract(String.valueOf(row[3]));
+            }
             return new SelectionOption(String.valueOf(row[0]), String.valueOf(row[1]), paramsList);
         }).collect(Collectors.toList());
     }

@@ -61,7 +61,7 @@ public class ApiClientController {
                 Map<String, Object> d = new HashMap<>();
                 d.put("queryId", t.getQueryId());
                 d.put("uniqueName", t.getUniqueName());
-                d.put("parameters", t.getParameters()); 
+                d.put("parameters", org.gepnic.doors.masterapi.util.SqlInputParameterExtractor.extract(t.getSqlText()));
                 mappingRepository.findByClientIdAndQueryId(client.getClientId(), t.getQueryId())
                         .ifPresent(mapping -> {
                             d.put("responseFilterColumn", mapping.getResponseFilterColumn());

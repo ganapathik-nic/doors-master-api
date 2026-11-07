@@ -30,7 +30,8 @@ public class TemplateProposalRequest {
         value.setDefaultAgentId(defaultAgentId);
         value.setRequestId(requestId);
         value.setSubmissionSource(submissionSource);
-        value.setParameters(parameters);
+        // SQL is authoritative; never trust stale or caller-supplied parameter metadata.
+        value.setParameters(org.gepnic.doors.masterapi.util.SqlInputParameterExtractor.extract(sqlText));
         return value;
     }
 }

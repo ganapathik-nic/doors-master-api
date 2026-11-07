@@ -336,6 +336,12 @@ public class SecurityConfig {
                     "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN"
                 )
 
+                .requestMatchers(HttpMethod.GET, "/api/v1/master/configuration-audit")
+                .hasAnyAuthority(
+                    "DataManager", "DATAMANAGER", "ROLE_DATAMANAGER", "ADMIN", "ROLE_ADMIN",
+                    "SecurityAdmin", "SECURITYADMIN", "ROLE_SECURITYADMIN"
+                )
+
                 // Remaining manager-plane endpoints are never available merely
                 // because a portal user is authenticated.
                 .requestMatchers("/api/v1/master/**").hasAnyAuthority(

@@ -39,7 +39,9 @@ public class DocumentServiceRegistryService {
                 .map(query -> Map.<String, Object>of(
                         "queryId", query.getQueryId(),
                         "uniqueName", query.getUniqueName(),
-                        "parameters", query.getParameters()))
+                        // Generate document guides and SDKs from the approved SQL,
+                        // not potentially stale legacy parameter metadata.
+                        "parameters", org.gepnic.doors.masterapi.util.SqlInputParameterExtractor.extract(query.getSqlText())))
                 .toList();
         List<Map<String, Object>> policies = policyRepository.findAllByOrderByPolicyNameAsc().stream()
                 .filter(policy -> "ACTIVE".equals(policy.getStatus()))

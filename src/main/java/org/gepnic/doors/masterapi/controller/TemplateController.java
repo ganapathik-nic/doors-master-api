@@ -226,15 +226,31 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
             if (!java.util.Set.of("PENDING", "APPROVED", "REJECTED", "DISABLED").contains(String.valueOf(newStatus)))
                 throw new IllegalArgumentException("Unsupported template status");
             if ("APPROVED".equals(newStatus) && !"APPROVED".equals(template.getStatus())) {
-                if (!"PENDING".equals(template.getStatus())) throw new IllegalStateException("Only pending templates can be approved");
-                if (authentication.getName().equalsIgnoreCase(template.getProposerId()))
-                    throw new SecurityException("A different reviewer must approve the proposal");
-                if (editedSql != null && !editedSql.equals(template.getSqlText()))
-                    throw new SecurityException("Submit SQL changes for review before approval");
+                boolean reEnabling = "DISABLED".equals(template.getStatus());
+                if (!reEnabling && !"PENDING".equals(template.getStatus()))
+                    throw new IllegalStateException("Only pending or previously disabled templates can be approved");
+                if (!reEnabling) {
+                    if (authentication.getName().equalsIgnoreCase(template.getProposerId()))
+                        throw new SecurityException("A different reviewer must approve the proposal");
+                    if (editedSql != null && !editedSql.equals(template.getSqlText()))
+                        throw new SecurityException("Submit SQL changes for review before approval");
+                }
+                template.setApproverId(authentication.getName());
+            }
+            if ("REJECTED".equals(newStatus)) {
+                String governanceNote = normalizeOptionalText(payload.get("note"));
+                if (governanceNote == null) {
+                    throw new IllegalArgumentException("Governance justification is required for rejection");
+                }
+                template.setGovernanceNote(governanceNote);
                 template.setApproverId(authentication.getName());
             }
             if (editedSql != null && !editedSql.equals(template.getSqlText())) {
                 if (!"PENDING".equals(newStatus)) throw new SecurityException("SQL changes must return to pending review");
+                String changeNote = normalizeOptionalText(payload.get("note"));
+                if (changeNote == null)
+                    throw new IllegalArgumentException("Explain the SQL changes before submitting them for review");
+                template.setGovernanceNote(changeNote);
                 template.setProposerId(authentication.getName());
                 template.setApproverId(null);
             }
@@ -274,6 +290,7 @@ public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMySubmissions(@
             }
 
             template.setSqlText(editedSql != null ? editedSql : template.getSqlText());
+            template.setParameters(org.gepnic.doors.masterapi.util.SqlInputParameterExtractor.extract(template.getSqlText()));
             template.setStatus(newStatus);
             if (!"APPROVED".equals(newStatus)) template.setAuthorizedAgents(java.util.List.of());
 

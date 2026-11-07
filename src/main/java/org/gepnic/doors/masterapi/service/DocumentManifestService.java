@@ -109,6 +109,10 @@ public class DocumentManifestService {
             }
             Object financial = value(map, "FINANCIAL_BID_DOC_DETAILS");
             Object summary = value(map, "TENDER_SUMMARY_DOC_DETAILS");
+            Object technicalTenders = value(map, "TENDER");
+            if (technicalTenders instanceof Collection<?> tenders) {
+                normalizeTechnicalOpening(tenders, registration, request, documents);
+            }
             if (financial instanceof Map<?, ?> details) {
                 normalizeFinancial(details, registration, request, documents, currentTenderId, value(map, "OPENING_DETAILS"));
             } else if (value(map, "t_CHART_DETAILS") != null || value(map, "t_BID_DOCS") != null) {
@@ -250,6 +254,53 @@ public class DocumentManifestService {
                         sourceCode, summaryPacketType(summaryCode), null);
             }
         }
+    }
+
+    private void normalizeTechnicalOpening(Collection<?> tenders,
+                                           DocumentServiceRegistration registration,
+                                           Map<String, Object> request,
+                                           List<Map<String, Object>> documents) {
+        for (Object tender : tenders) {
+            if (!(tender instanceof Map<?, ?> tenderMap)) continue;
+            String tenderId = firstNonBlank(text(value(tenderMap, "TENDER_ID")),
+                    text(request.get("p_tenderid")));
+            Object bidInfo = value(tenderMap, "Bid_Info");
+            if (!(bidInfo instanceof Collection<?> bids)) continue;
+            for (Object bid : bids) {
+                if (!(bid instanceof Map<?, ?> bidMap)) continue;
+                String bidId = text(value(bidMap, "BID_ID"));
+                String packetType = technicalBidPacketType(tenderMap, bidMap, request);
+                Object docInfo = value(bidMap, "DOC_INFO");
+                if (bidId == null || !(docInfo instanceof Collection<?> files)) continue;
+                for (Object file : files) {
+                    if (!(file instanceof Map<?, ?> fileMap)) continue;
+                    String documentType = text(value(fileMap, "t_DOC_TYPE"));
+                    String fileName = text(value(fileMap, "t_DOC_NAME"));
+                    String sourceCode = text(value(fileMap, "t_DOC_CODE"));
+                    add(documents, registration, documentType, documentType, bidId, fileName,
+                            bidId, tenderId, sourceCode, packetType, bidId);
+                }
+            }
+        }
+    }
+
+    private String technicalBidPacketType(Map<?, ?> tender, Map<?, ?> bid,
+                                          Map<String, Object> request) {
+        String configured = firstNonBlank(text(value(bid, "PACKET_TYPE")),
+                firstNonBlank(text(value(bid, "OPENING_TYPE")),
+                        firstNonBlank(text(value(tender, "PACKET_TYPE")),
+                                firstNonBlank(text(value(tender, "OPENING_TYPE")),
+                                        text(request.get("packetType"))))));
+        String status = text(value(bid, "STATUS"));
+        if (configured == null) configured = status;
+        if (configured != null) {
+            configured = configured.replaceFirst("^(?:Not )?Admitted-", "").trim();
+            if (!configured.isBlank()) return configured;
+        }
+        // Legacy technical-opening query responses do not expose OPENING_TYPE.
+        // GePNIC's document service rejects the display label "Technical" and
+        // expects the actual bid-packet path used by these records.
+        return "Fee/PreQual/Technical";
     }
 
     private String summaryServiceDocCode(String sourceCode, String summaryId, String documentType) {

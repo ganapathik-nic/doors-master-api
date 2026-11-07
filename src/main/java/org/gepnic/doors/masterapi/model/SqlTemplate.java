@@ -83,7 +83,13 @@ public class SqlTemplate extends DoorsBaseEntity {
     private List<String> authorizedAgents = new ArrayList<>();
 
     public void setAuthorizedAgents(List<String> authorizedAgents) {
-        this.authorizedAgents = authorizedAgents != null ? authorizedAgents : new ArrayList<>();
+        // Hibernate needs a mutable collection while synchronising the
+        // ElementCollection. Status-only rejection passes List.of(), which is
+        // immutable and previously caused an UnsupportedOperationException at
+        // flush time on PostgreSQL deployments.
+        this.authorizedAgents = authorizedAgents != null
+                ? new ArrayList<>(authorizedAgents)
+                : new ArrayList<>();
     }
     @Column(name = "request_id")
 private Long requestId; // Nullable

@@ -63,42 +63,41 @@ public ResponseEntity<?> executeReport(
     String authenticatedUser = principal.getName();
     request.setPerformedBy(authenticatedUser);
 
+    // Do not replace Agent, authorization, timeout or database exceptions with
+    // a generic HTTP 500. Let GlobalExceptionHandler preserve the specific
+    // problem code, retryability and DOORS trace ID for operations support.
+    ReportResult result = reportViewerService.executeReport(request);
+    ApiResponse<ReportResult> finalResponse = ApiResponse.success(result, "Success");
+
     try {
-        ReportResult result = reportViewerService.executeReport(request);
-        ApiResponse<ReportResult> finalResponse = ApiResponse.success(result, "Success");
+        String jsonResponse = objectMapper.writeValueAsString(finalResponse);
+        String authHeader = httpRequest.getHeader("Authorization");
+        String hybridKey = "D00RS-NIC-SECURE"; // Default
 
-        try {
-            String jsonResponse = objectMapper.writeValueAsString(finalResponse);
-            String authHeader = httpRequest.getHeader("Authorization");
-            String hybridKey = "D00RS-NIC-SECURE"; // Default
-
-            if (authHeader != null && authHeader.contains("Bearer ")) {
-                // Remove prefix and any potential whitespace
-                String rawJwt = authHeader.replace("Bearer ", "").trim();
+        if (authHeader != null && authHeader.contains("Bearer ")) {
+            // Remove prefix and any potential whitespace
+            String rawJwt = authHeader.replace("Bearer ", "").trim();
                 
-                // 🚀 ENSURE WE HAVE AT LEAST 8 CHARS TO SLICE
-                if (rawJwt.length() >= 8) {
-                    String systemPart = "D00RS-NI"; 
-                    String userPartSlice = rawJwt.substring(rawJwt.length() - 8);
-                    hybridKey = systemPart + userPartSlice;
-                }
+            // 🚀 ENSURE WE HAVE AT LEAST 8 CHARS TO SLICE
+            if (rawJwt.length() >= 8) {
+                String systemPart = "D00RS-NI";
+                String userPartSlice = rawJwt.substring(rawJwt.length() - 8);
+                hybridKey = systemPart + userPartSlice;
             }
-
-            // 🕵️‍♂️ CRITICAL: This MUST match the browser F12 console exactly
-
-            String encryptedPayload = org.gepnic.doors.masterapi.util.EncryptionUtils.encrypt(jsonResponse, hybridKey);
-
-            return ResponseEntity.ok()
-                    .header("X-Content-Secure", "true")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("secureData", encryptedPayload, "info", "Hybrid Encrypted"));
-
-        } catch (Exception encryptEx) {
-            log.error("Encryption Failure", encryptEx);
-            throw new org.gepnic.doors.masterapi.exception.EncryptionException("Unable to protect report response", encryptEx);
         }
-    } catch (Exception e) {
-        return ResponseEntity.status(500).body(ApiResponse.error("Execution Failed", 500));
+
+        // 🕵️‍♂️ CRITICAL: This MUST match the browser F12 console exactly
+
+        String encryptedPayload = org.gepnic.doors.masterapi.util.EncryptionUtils.encrypt(jsonResponse, hybridKey);
+
+        return ResponseEntity.ok()
+                .header("X-Content-Secure", "true")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("secureData", encryptedPayload, "info", "Hybrid Encrypted"));
+
+    } catch (Exception encryptEx) {
+        log.error("Encryption Failure", encryptEx);
+        throw new org.gepnic.doors.masterapi.exception.EncryptionException("Unable to protect report response", encryptEx);
     }
 }
 

@@ -45,6 +45,11 @@ spring:
       max-request-size: 100MB
 
 doors:
+  write-sdk:
+    # Dedicated local UAT identity bundled only in UAT SDK downloads.
+    # Production SDKs never include this test identity.
+    uat-identity-path: ${DOORS_WRITE_SDK_UAT_IDENTITY_PATH:C:/Users/User/doors/security/doors-identity.p12}
+    uat-wallet-properties: ${DOORS_WRITE_SDK_UAT_WALLET_PROPERTIES:C:/Users/User/doors/security/doors-wallet.properties}
   aira:
     # Local sovereign AI. Environment values can still override every setting.
     enabled: ${DOORS_AIRA_ENABLED:true}
@@ -85,6 +90,10 @@ doors:
     mfa-encryption-key: ${DOORS_SECURITY_MFA_ENCRYPTION_KEY:REVWRUxPUE1FTlQtT05MWS0zMi1CWVRFLUtFWSEhISE=}
     manager-plane-enforced: ${DOORS_SECURITY_MANAGER_PLANE_ENFORCED:false}
     manager-plane-token: ${DOORS_SECURITY_MANAGER_PLANE_TOKEN:LOCAL-DEVELOPMENT-ONLY}
+    # A local browser reaches the API through Vite/nginx on loopback. Preserve
+    # account allowlists in every deployed profile; only this dev profile
+    # bypasses the per-user VPN-IP comparison to make local login testable.
+    development-bypass-user-ip-whitelist: true
     bootstrap-legacy-admin-enabled: ${DOORS_SECURITY_BOOTSTRAP_LEGACY_ADMIN_ENABLED:false}
     bootstrap-security-admin:
       username: ${DOORS_SECURITY_ADMIN_USERNAME:}

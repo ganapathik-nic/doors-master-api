@@ -62,6 +62,19 @@ class RegisteredDocumentServiceClientTest {
     }
 
     @Test
+    void doesNotAppendDownloadPathWhenBaseUrlAlreadyContainsIt() {
+        registration.setBaseUrl("https://etenders.kerala.gov.in/nicgep_docs_webservice/Documents/downloadDocuments");
+        registration.setDownloadPath("/Documents/downloadDocuments");
+
+        URI uri = client.buildDownloadUri(
+                registration, "2614231", "BIDPCK", "CATALOGUESPECIFICATION.pdf", "Technical");
+
+        assertThat(uri.toString()).isEqualTo(
+                "https://etenders.kerala.gov.in/nicgep_docs_webservice/Documents/downloadDocuments"
+                        + "?downloadId=2614231&docCode=BIDPCK&fileName=CATALOGUESPECIFICATION.pdf&packetType=Technical");
+    }
+
+    @Test
     void rejectsEmptySuccessfulResponse() {
         URI uri = client.buildDownloadUri(registration, "403", "NEGOTIEBIDDOC", "BOQ_29543.xls", "Finance");
         documentDownloader.response = response(new byte[0], MediaType.APPLICATION_OCTET_STREAM);

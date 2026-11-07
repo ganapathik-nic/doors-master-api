@@ -95,7 +95,7 @@ public class ApiUserSelfServiceController {
             item.put("queryId", template.getQueryId());
             item.put("uniqueName", template.getUniqueName());
             item.put("description", template.getDescription());
-            item.put("parameters", template.getParameters());
+            item.put("parameters", org.gepnic.doors.masterapi.util.SqlInputParameterExtractor.extract(template.getSqlText()));
             item.put("responseFilterColumn", mapping.getResponseFilterColumn());
             item.put("responseFilterValue", mapping.getResponseFilterValue());
             details.add(item);
